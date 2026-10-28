@@ -1,0 +1,94 @@
+name: Shep
+options:
+  bundleIdPrefix: dev.shep
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    ENABLE_HARDENED_RUNTIME: NO
+    CODE_SIGN_IDENTITY: "-"
+    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "0.1.0"
+targets:
+  ShepCore:
+    type: framework
+    platform: macOS
+    sources:
+      - path: ShepCore/Sources
+    settings:
+      base:
+        PRODUCT_NAME: ShepCore
+        PRODUCT_BUNDLE_IDENTIFIER: dev.shep.core
+        GENERATE_INFOPLIST_FILE: YES
+        DEFINES_MODULE: YES
+        SKIP_INSTALL: YES
+        DYLIB_INSTALL_NAME_BASE: "@rpath"
+  ShepCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: ShepCore/Tests
+    dependencies:
+      - target: ShepCore
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.shep.coretests
+        GENERATE_INFOPLIST_FILE: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @loader_path/../Frameworks @executable_path/../Frameworks"
+  Shep:
+    type: application
+    platform: macOS
+    sources:
+      - path: Shep
+      - path: Resources/shep-dog
+        type: folder
+    dependencies:
+      - target: ShepCore
+    info:
+      path: Config/Info.plist
+      properties:
+        CFBundleDisplayName: Shep
+        LSUIElement: true
+        LSMinimumSystemVersion: "14.0"
+        NSHumanReadableCopyright: "Copyright (c) 2026 Shep contributors. Dog art derived from bloub (MIT), Copyright (c) 2026 Jérémy Perret."
+        NSMicrophoneUsageDescription: "Shep listens when you talk to it, so you can ask for things by voice. If you turn on Hey Shep in Settings, it also keeps the microphone open in the background, listening only for that phrase."
+        NSSpeechRecognitionUsageDescription: "Shep turns what you say into text so it can act on it. Hey Shep, if you turn it on, is recognized on this Mac only; nothing is sent to a server."
+        NSScreenCaptureUsageDescription: "Shep looks at the window in front of you to find controls and answer questions about it."
+    entitlements:
+      path: Config/Shep.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+    settings:
+      base:
+        PRODUCT_NAME: Shep
+        PRODUCT_BUNDLE_IDENTIFIER: dev.shep.app
+        INFOPLIST_FILE: Config/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Config/Shep.entitlements
+        ENABLE_APP_SANDBOX: NO
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+schemes:
+  Shep:
+    build:
+      targets:
+        Shep: all
+    run:
+      config: Debug
+      commandLineArguments:
+        "--dock-demo": false
+    test:
+      config: Debug
+      targets:
+        - ShepCoreTests
+  ShepCore:
+    build:
+      targets:
+        ShepCore: all
+    test:
+      config: Debug
+      targets:
+        - ShepCoreTests

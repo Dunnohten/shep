@@ -1,0 +1,76 @@
+Shep — third-party notices
+
+This product includes material from the following project.
+
+bloub (goop dog avatar: drawing code, geometry, palettes)
+  Source:  https://github.com/jeremy-prt/bloub  (branch dog-goop, commit 6b59465)
+  Files:   tools/shep-dog/src/{dog,outline,contrast,themes}.ts, and the built Resources/shep-dog/{index,house}.html
+  License: MIT
+
+OmniParser v3 icon_detect (optional detector sidecar; weights are NOT in this repository)
+  Source:  https://github.com/microsoft/OmniParser
+  Use:     scripts/detector-server.py runs the icon_detect v3 TorchScript weights that the user supplies (--omni-weights) or downloads
+           (--omni-repo) into ~/Library/Application Support/Shep/models. The decode follows the OmniParser README. The weights' own licence
+           file (MIT for v3) travels with them; the OmniParser v2 icon_detect weights are AGPL-3.0 and are never used.
+
+OmniParser icon_caption (optional, --captions; weights are NOT in this repository)
+  Source:  microsoft/OmniParser-v2.0 on Hugging Face (MIT; a Florence-2 fine-tune), and the microsoft/Florence-2-base processor (MIT).
+  Use:     scripts/detector-server.py loads them only when started with --captions; they download at runtime.
+
+Vite (MIT), included in the built pages
+  Source:  https://github.com/vitejs/vite
+  Use:     Resources/shep-dog/{index,house}.html are Vite build outputs and inline Vite's module-preload helper.
+
+Build and test tools (not redistributed): Vite and vite-plugin-singlefile (build), happy-dom and jiti (page tests).
+Sidecar runtime (installed by the user, not redistributed): PyTorch, Hugging Face transformers and huggingface_hub, Pillow, mlx-vlm.
+
+SAM 3 by Meta, under the SAM License (optional detector, OFF by default; weights are NOT in this repository)
+  License text: https://github.com/facebookresearch/sam3/blob/main/LICENSE  (the SAM License, last updated Nov 19, 2025)
+  Use:     only when the user starts the sidecar with --sam3 and their own Hugging Face token; the gated weights download
+           at runtime and are never redistributed here. The SAM License is not an open-source licence.
+
+----------------------------------------------------------------------------
+bloub: MIT License
+
+Copyright (c) 2026 Jérémy Perret
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----------------------------------------------------------------------------
+Vite: MIT License
+
+Copyright (c) 2019-present, VoidZero Inc. and Vite contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>shep dog</title>
+    <link rel="icon" href="data:," />
+    <style>
+      html, body { margin: 0; width: 100%; height: 100%; background: transparent; overflow: hidden; }
+      /* Never the whole view: until setLayout arrives the dog is tab-sized and hidden, so a missed layout cannot show a giant head. */
+      #dog { position: absolute; left: 0; top: 0; width: 40px; height: 28px; visibility: hidden; transform-origin: 50% 100%; will-change: transform, opacity; }
+      #dog.placed { visibility: visible; }
+      #dog svg { display: block; width: 100%; height: 100%; overflow: visible; }
+      #card {
+        position: absolute; left: 6px; right: 6px; box-sizing: border-box; padding: 8px 10px; border-radius: 14px;
+        font: 600 12px/1.35 -apple-system, system-ui, sans-serif; opacity: 0; pointer-events: none; transform: scale(.9); transform-origin: 30px 0;
+        transition: opacity .15s, transform .26s cubic-bezier(.3, 1.5, .5, 1);
+        max-height: 150px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.25);
+        display: flex; flex-direction: column;
+      }
+      #card.on { opacity: 1; pointer-events: auto; transform: none; }
+      /* Reduce Motion: the card only fades. */
+      body.calm #card { transform: none; transition: opacity .2s; }
+      @media (prefers-reduced-motion: reduce) { #card { transform: none; transition: opacity .2s; } }
+      /* Long text scrolls inside the card; the buttons below it never leave the 150 px. */
+      #text { white-space: pre-wrap; overflow-wrap: anywhere; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+      #text:empty { display: none; }
+      #buttons { display: flex; flex: none; gap: 6px; margin-top: 6px; }
+      #buttons:empty { display: none; }
+      #buttons button {
+        font: 600 12px -apple-system, system-ui, sans-serif; padding: 3px 12px; border-radius: 999px; cursor: pointer;
+        border: 1px solid rgba(0,0,0,.35); background: rgba(255,255,255,.55); color: inherit;
+      }
+      #pill { display: none; margin: 0; }
+      #pill[hidden] { display: none !important; }
+      #buttons button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+      #dog:focus-visible { outline: 2px solid #3D6BFF; outline-offset: 1px; }
+      #pill input {
+        width: 100%; box-sizing: border-box; border: 0; outline: 0; border-radius: 999px; padding: 4px 10px;
+        font: 500 13px -apple-system, system-ui, sans-serif; background: rgba(255,255,255,.7); color: #111;
+      }
+      #card.pilling #pill { display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="dog" role="button" tabindex="0" aria-label="Shep, assistant"></div>
+    <!-- No aria-live here: Swift announces replies once (NSAccessibility), so the page stays silent. -->
+    <div id="card" inert aria-hidden="true">
+      <div id="text"></div>
+      <div id="buttons"></div>
+      <form id="pill" hidden><input id="pillInput" type="text" aria-label="Ask Shep" placeholder="Ask Shep" autocomplete="off" /></form>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
