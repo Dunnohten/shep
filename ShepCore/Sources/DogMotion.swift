@@ -146,7 +146,7 @@ public enum DockMove: Equatable {
 public enum DockMotionPlanner {
     /// Moves up to this many points (either axis, Euclidean) slide; further ones jump.
     public static let slideLimit: CGFloat = 160
-    public static let slideSeconds: TimeInterval = 0.14
+    public static let slideSeconds: TimeInterval = 0.22
 
     public static func plan(from old: CGRect?, to new: CGRect?, sameWindow: Bool, reduceMotion: Bool) -> DockMove {
         guard let new = new else { return .none }

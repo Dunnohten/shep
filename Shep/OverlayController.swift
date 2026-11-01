@@ -7,6 +7,8 @@ import ShepCore
 @MainActor
 final class OverlayController {
     private let overlay = DockOverlay()
+    /// Replies, the approval card, the ask field and the transcript: native views in their own panel, beside the dog's.
+    private let card = CardController()
     private let tracker = WindowTracker()
     private let demo: Bool
     /// Log tracker, activity and travel lines to stdout (the demo flags, and the cycle script).
@@ -34,7 +36,17 @@ final class OverlayController {
     /// The app that was in front when an approval card took key status; it gets focus back when the card closes.
     private var previousFront: NSRunningApplication?
     private var approvalKeyed = false
+    /// After Approve under VoiceOver the card keeps the keyboard and shows the result (`VoiceOverFlow.holdsCardForResult`).
+    private var holdingResult = false
+    private var holdWork: DispatchWorkItem?
+    /// The held result's line, posted a moment after the card shows it (`VoiceOverFlow.heldResultPostDelay`).
+    private var heldPostWork: DispatchWorkItem?
+    private var heldPostLine: String?
+    /// A held result's line that the ask field interrupted: said when the field closes.
+    private var lineAfterPill: String?
     private var observers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
+    /// When Shep's VoiceOver announcements go out (see `announce`).
+    private var announcements = AnnouncementGate()
     private var mouseMonitors: [Any] = []
 
     // Motion: a mirror of the page's state machine (events go to both), the activity rule that pauses the page's loop,
@@ -61,6 +73,8 @@ final class OverlayController {
     var onReduceMotionChanged: ((Bool) -> Void)?
     /// Everything Shep says on its card (replies are spoken from this; see VoiceController).
     var onReply: ((String) -> Void)?
+    /// The doghouse window, for announcements made while neither the dock nor the card shows (set by ShepCoordinator).
+    var announcementFallback: (() -> NSWindow?)?
     /// While the dock may be shown: true when the tracker has no window to put the tab on, false when it has one again.
     var onWindowLost: ((Bool) -> Void)?
 
@@ -77,6 +91,25 @@ final class OverlayController {
         overlay.dogView.onClick = { [weak self] in self?.dogClicked() }
         overlay.dogView.onMessage = { [weak self] message in self?.handle(message) }
         overlay.container.onPress = { [weak self] in self?.dogClicked() }
+        card.onChoice = { [weak self] id in self?.resolveChoice(id); self?.updateClickThrough() }
+        card.onSubmit = { [weak self] text in
+            self?.lineAfterPill = nil   // a new request: the last result is not said over it
+            self?.closePill()
+            self?.onSubmit?(text)
+            self?.updateClickThrough()
+        }
+        card.onCancel = { [weak self] in
+            guard let self else { return }
+            if self.pendingChoice != nil { self.resolveChoice(nil) } else { self.closePill() }   // Escape on an approval card, or on the ask field
+            self.updateClickThrough()
+        }
+        card.onExpired = { [weak self] in
+            guard let self else { return }
+            self.endResultHold(restoreKey: true)
+            self.cardVisible = self.pillOpen
+            self.resolveChoice(nil)
+            self.updateClickThrough()
+        }
         tracker.demo = demo
         tracker.onUpdate = { [weak self] obs in self?.handle(obs) }
     }
@@ -130,9 +163,10 @@ final class OverlayController {
     /// Push-to-talk's partial text, read-only in the pill. Kept while the dock is not up and shown when it arrives.
     func showTranscript(_ text: String) {
         transcript = text
-        guard presentationAllowed, overlay.isVisible, !pillOpen, pendingChoice == nil else { return }
+        guard presentationAllowed, overlay.isVisible, !pillOpen, pendingChoice == nil, !holdingResult,
+              VoiceOverFlow.showsQuestionPill(voiceOverRunning: NSWorkspace.shared.isVoiceOverEnabled) else { return }
         cardVisible = true
-        overlay.dogView.showTranscript(text)
+        card.show(.transcript(text), layout: currentLayout)
         updateClickThrough()
     }
 
@@ -140,7 +174,7 @@ final class OverlayController {
         guard !transcript.isEmpty else { return }
         transcript = ""
         guard !pillOpen, pendingChoice == nil else { return }
-        overlay.dogView.closeCard()
+        card.hide(animated: true)
         cardVisible = false
     }
 
@@ -167,14 +201,14 @@ final class OverlayController {
 
     /// Closes the ask field, any card and a waiting choice (the panel itself is left for the caller to hide).
     func prepareToLeave() {
+        lineAfterPill = nil   // Shep is leaving: an old result is not said later
+        endResultHold(restoreKey: true)
         resolveChoice(nil, restoreKey: false)
         if pillOpen {
             pillOpen = false
             onPillChanged?(false)
-            overlay.acceptsTextInput = false
-            overlay.container.pageControlsExposed = false
         }
-        overlay.dogView.closeCard()
+        card.hide()
         cardVisible = false
     }
 
@@ -216,7 +250,10 @@ final class OverlayController {
     private static var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
 
     /// "Done." for VoiceOver (the finish beat's announcement).
-    func announceDone() { announce(FinishBeat.announcement) }
+    /// Not said again when the walk's "Done." card was the last line (`AnnouncementGate.requestUnlessLast`).
+    func announceDone() {
+        for line in announcements.requestUnlessLast(FinishBeat.announcement, at: Self.now) { post(line) }
+    }
 
     func hop() { overlay.dogView.hop(points: FinishBeat.hopHeight, seconds: FinishBeat.hopSeconds) }
 
@@ -361,7 +398,7 @@ final class OverlayController {
 
     private func updateClickThrough() {
         guard let layout = currentLayout, overlay.isVisible else { return }
-        let rects = PanelGeometry.interactiveRects(layout, bubbleVisible: cardVisible || pillOpen)
+        let rects = PanelGeometry.interactiveRects(layout, bubbleVisible: false)   // a card is its own window: only the tab belongs to the dog panel
         let capture = PanelGeometry.shouldCapture(point: NSEvent.mouseLocation, rects: rects)
         if overlay.ignoresMouseEvents == capture { overlay.ignoresMouseEvents = !capture }
     }
@@ -383,50 +420,84 @@ final class OverlayController {
     }
 
     func openPill() {
+        // The field takes the keyboard; a held result's line not yet said waits until the field closes (not said over it).
+        if heldPostWork != nil, let line = heldPostLine { lineAfterPill = line }
+        endResultHold(restoreKey: false)
         resolveChoice(nil)
         transcript = ""
         pillOpen = true
         cardVisible = true
         onPillChanged?(true)
-        overlay.acceptsTextInput = true
-        overlay.container.pageControlsExposed = true
-        overlay.ignoresMouseEvents = false
-        overlay.makeKey()
-        overlay.dogView.openPill()
-        overlay.makeFirstResponder(overlay.dogView)
+        card.show(.askField, layout: currentLayout)   // takes key status and puts the cursor in the field
     }
 
     private func closePill() {
         guard pillOpen else { return }
         pillOpen = false
         onPillChanged?(false)
-        overlay.acceptsTextInput = false
-        overlay.container.pageControlsExposed = false
-        overlay.dogView.closeCard()
-        // Hand key status back: re-ordering a non-activating panel drops it without activating Shep.
-        overlay.orderOut(nil)
-        if presentationAllowed, !userHidden, lastPlacement.layout != nil { overlay.orderFrontRegardless() }
+        card.hide()   // key status leaves with the card's window; Shep was never activated
         updateActivity()
+        // Said on a card: VoiceOver moves its cursor into the card as it appears, so it is heard from another app.
+        if let line = lineAfterPill { lineAfterPill = nil; say(line, milliseconds: 4000, afterDialogName: true) }
     }
 
-    func say(_ text: String, milliseconds: Int = 4000) {
+    /// Shows `text` on the card and speaks it, or speaks `spoken` instead when given (the card keeps the whole text).
+    /// `afterDialogName`: the line is posted once VoiceOver has read the card's dialog name (as for a held result).
+    func say(_ text: String, milliseconds: Int = 4000, spoken: String? = nil, afterDialogName: Bool = false) {
         resolveChoice(nil)
         transcript = ""
-        onReply?(text)
+        onReply?(spoken ?? text)
         cardVisible = true
-        overlay.dogView.say(text, milliseconds: milliseconds)
-        announce(text)
+        cancelHeldPost()
+        if holdingResult && !approvalKeyed {
+            // The hold went through a mouse click (`hideForClick` gave the app the keyboard): the card takes it again and
+            // gives it back to the app in front now.
+            let front = NSWorkspace.shared.frontmostApplication
+            previousFront = (front?.processIdentifier == ProcessInfo.processInfo.processIdentifier) ? nil : front
+            approvalKeyed = true
+        }
+        let model = CardModel.reply(text, milliseconds: milliseconds)
+        card.show(model, layout: currentLayout, keepKey: holdingResult)   // after Approve under VoiceOver: said where the cursor is
+        let line = model.announcement ?? text
+        if holdingResult || afterDialogName {
+            // VoiceOver reads the changed card as "Shep, Dialog" first; the line goes out after it (and counts from then).
+            let lines = announcements.schedule(line, after: VoiceOverFlow.heldResultPostDelay, at: Self.now)
+            heldPostLine = line
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.card.isShown, !self.announcements.callerSpeaking else { return }
+                    self.heldPostWork = nil
+                    for l in lines { self.post(l) }
+                }
+            }
+            heldPostWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + VoiceOverFlow.heldResultPostDelay, execute: work)
+        } else {
+            announce(line)
+        }
+    }
+
+    /// A held result's line that has not gone out yet is dropped (its card is gone or replaced).
+    /// With `flush` (the hold ended, the finish beat may already have counted on it) the line is posted now instead.
+    private func cancelHeldPost(flush: Bool = false) {
+        guard let work = heldPostWork else { return }
+        work.cancel()
+        heldPostWork = nil
+        announcements.unschedule(at: Self.now)
+        if flush, let line = heldPostLine { announce(line) }
     }
 
     /// Shows `text` with buttons and waits. Returns the chosen id, or nil if the card was dismissed (Escape) or replaced.
-    /// While the card shows the panel is the key window (and only then), the page focuses Approve, the card is a dialog named
-    /// `title` ("Shep wants to press Save in TextEdit"), and Escape cancels. When it closes, the app that was in front gets focus back.
+    /// While the card shows its panel is the key window (and only then), the text holds the focus (VoiceOver reads it first; a stray Return or Space never
+    /// approves), the card is a dialog named `title` ("Shep wants to press Save in TextEdit"), and Escape cancels. When it closes, the app that was in front gets focus back.
     func ask(_ text: String, choices: [(id: String, label: String)], title: String) async -> String? {
         resolveChoice(nil, restoreKey: false)
+        cancelResultHold()   // the next step's card takes over the keyboard (and the app to give it back to)
         transcript = ""
         onReply?(text)
-        // The one announcement for this card (the page has no live region): the dialog's name and the way out.
-        announce(title + ". " + choices.map(\.label).joined(separator: " or ") + "?")
+        let model = CardModel.approval(text: text, choices: choices, title: title)
+        // No announcement for an approval: the card moves the VoiceOver cursor to its text, which VoiceOver then reads.
+        if let line = model.announcement { announce(line) }
         return await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
             pendingChoice = cont
             cardVisible = true
@@ -435,13 +506,7 @@ final class OverlayController {
                 previousFront = (front?.processIdentifier == ProcessInfo.processInfo.processIdentifier) ? nil : front
             }
             approvalKeyed = true
-            overlay.acceptsTextInput = true
-            overlay.onEscape = { [weak self] in self?.resolveChoice(nil) }   // fallback when the page does not get the key
-            overlay.container.pageControlsExposed = true
-            overlay.ignoresMouseEvents = false
-            overlay.makeKey()
-            overlay.makeFirstResponder(overlay.dogView)
-            overlay.dogView.ask(text, choices: choices, title: title)
+            card.show(model, layout: currentLayout)   // takes key status; the text holds the focus, Escape cancels
         }
     }
 
@@ -449,24 +514,46 @@ final class OverlayController {
         guard let c = pendingChoice else { return }
         pendingChoice = nil
         c.resume(returning: id)
+        if restoreKey, VoiceOverFlow.holdsCardForResult(voiceOverRunning: NSWorkspace.shared.isVoiceOverEnabled, choice: id) {
+            beginResultHold()
+        } else {
+            endApproval(restoreKey: restoreKey)
+        }
+    }
+
+    /// Approve under VoiceOver: the card (and the VoiceOver cursor in it) stays until the result has been said; focus goes
+    /// back when Shep walks home (`prepareToLeave`), when the result card expires, or after `VoiceOverFlow.resultHoldSeconds`.
+    private func beginResultHold() {
+        holdingResult = true
+        holdWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.endResultHold(restoreKey: true) } }
+        holdWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + VoiceOverFlow.resultHoldSeconds, execute: work)
+    }
+
+    /// Ends the hold: the card goes and (with `restoreKey`) the app that was in front gets the keyboard back.
+    private func endResultHold(restoreKey: Bool) {
+        guard holdingResult else { return }
+        cancelHeldPost(flush: restoreKey)   // going home or timing out: the line is still said (not over the ask field)
+        cancelResultHold()
         endApproval(restoreKey: restoreKey)
     }
 
-    /// The card is gone: stop being the key window, close the card in the page, give the previous app its focus back.
+    /// Stops holding without closing anything (a new approval card takes over).
+    private func cancelResultHold() {
+        cancelHeldPost()
+        holdingResult = false
+        holdWork?.cancel()
+        holdWork = nil
+    }
+
+    /// The card is gone: close its window (which takes key status with it) and give the previous app its focus back.
     private func endApproval(restoreKey: Bool) {
-        overlay.onEscape = nil
-        if !pillOpen { overlay.container.pageControlsExposed = false }
         guard approvalKeyed else { return }
         approvalKeyed = false
-        if !pillOpen { overlay.acceptsTextInput = false }
-        overlay.dogView.closeCard()
+        card.hide()
         cardVisible = pillOpen
         guard restoreKey, !pillOpen else { previousFront = nil; return }
-        // Re-ordering a non-activating panel drops its key status without activating Shep.
-        if overlay.isVisible && !hiddenForClick {
-            overlay.orderOut(nil)
-            if presentationAllowed, !userHidden, lastPlacement.layout != nil { overlay.orderFrontRegardless() }
-        }
         if let app = previousFront, !app.isTerminated,
            NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier {
             app.activate(options: [])
@@ -477,20 +564,10 @@ final class OverlayController {
 
     private func handle(_ message: DogMessage) {
         switch message {
-        case .submit(let text):
-            closePill()
-            onSubmit?(text)
-        case .cancel:
-            if pendingChoice != nil { resolveChoice(nil) } else { closePill() }   // Escape on an approval card, or on the ask field
         case .activate:
             dogClicked()
-        case .choice(let id):
-            resolveChoice(id)
-        case .cardShown:
-            cardVisible = true
-        case .cardHidden:
-            cardVisible = pillOpen
-            resolveChoice(nil)
+        case .submit, .cancel, .choice, .cardShown, .cardHidden:
+            break   // the page no longer draws a card: these never arrive, and a stray one must not answer an approval
         case .ready:
             break   // DogWebView answers it itself: it sends the newest layout
         case .pageError(let text):
@@ -502,9 +579,39 @@ final class OverlayController {
     }
 
     /// VoiceOver speaks this; with it off nothing happens (the card is on screen anyway).
-    /// This is the only announcement mechanism for replies and approval cards: the dog page has no aria-live region.
-    private func announce(_ text: String) {
-        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+    /// This is the only announcement mechanism for Shep: the dog page has no aria-live region. `AnnouncementGate` decides when
+    /// (nothing while the caller is asking, one "Done."), `AnnouncementTarget` on which window.
+    func announce(_ text: String, kind: AnnouncementKind = .line) {
+        for line in announcements.request(text, kind: kind, at: Self.now) { post(line) }
+    }
+
+    /// The caller is speaking their question (true from the talk key or "Hey Shep" until the final transcript). Shep says
+    /// nothing meanwhile; the newest line held back is said when the question is over.
+    func setCallerSpeaking(_ speaking: Bool) {
+        guard speaking != announcements.callerSpeaking else { return }
+        for line in announcements.setCallerSpeaking(speaking, at: Self.now) { post(line) }
+    }
+
+    /// Value changes (the home indicator) may be posted: not while the caller is asking.
+    var allowsStateNotifications: Bool { announcements.allowsStateNotifications }
+
+    /// When "Done." went to VoiceOver, if that was just now (the finish beat times the bark from it).
+    func doneAnnouncedAt() -> TimeInterval? {
+        announcements.lastPosted(of: FinishBeat.announcement, within: AnnouncementGate.repeatWindow, at: Self.now)
+    }
+
+    /// High priority, on a visible window of Shep's: VoiceOver does not speak one posted on the application element while
+    /// its cursor is in another app.
+    private func post(_ text: String) {
+        let home = announcementFallback?()
+        let element: Any
+        switch AnnouncementTarget.choose(cardVisible: card.isShown, dockVisible: overlay.isVisible, homeVisible: home?.isVisible ?? false) {
+        case .card: element = card.panel
+        case .dock: element = overlay
+        case .home: element = home as Any
+        case .application: element = NSApp as Any
+        }
+        NSAccessibility.post(element: element, notification: .announcementRequested,
                              userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
     }
 
@@ -513,8 +620,12 @@ final class OverlayController {
     /// The panel would sit over the target (and answer the hit test), so it steps aside for the click.
     func hideForClick() async {
         hiddenForClick = true
+        // The click goes to the app: it gets the keyboard back first. A result hold goes on (the result card takes the
+        // keyboard again, `say`); its timer still ends it.
+        cancelHeldPost()
+        if holdingResult { endApproval(restoreKey: true) }
         resolveChoice(nil, restoreKey: false)
-        overlay.dogView.closeCard()
+        card.hide()
         cardVisible = false
         let number = overlay.windowNumber
         overlay.orderOut(nil)
@@ -564,6 +675,7 @@ final class OverlayController {
         if presentationAllowed && !hiddenForClick { onWindowLost?(placement.layout == nil) }
         guard presentationAllowed, !userHidden, !hiddenForClick, let tab = placement.layout else {
             if overlay.isVisible { overlay.orderOut(nil) }
+            card.place(nil)   // a waiting card stays waiting; it comes back with the dock
             if shownTab != nil { motionSend(.hide) }   // the head goes back into the tab; it rises again when the tab returns
             shownTab = nil
             shownPID = nil
@@ -589,7 +701,7 @@ final class OverlayController {
             if let d = slide {
                 NSAnimationContext.runAnimationGroup { ctx in
                     ctx.duration = d
-                    ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                     overlay.animator().setFrame(layout.panelFrame, display: true)
                 }
             } else {
@@ -603,6 +715,7 @@ final class OverlayController {
         }
         let wasVisible = overlay.isVisible
         if !wasVisible { overlay.orderFrontRegardless() }
+        card.place(layout)
         updateClickThrough()
         updateActivity()
         // The head rises out of the tab when it appears or jumps; the very first time the page does that itself on placement.

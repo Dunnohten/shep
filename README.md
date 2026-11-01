@@ -1,6 +1,6 @@
 # Shep
 
-Shep is a small dog that lives in your Mac's menu bar. When you call it, it walks out of its doghouse and docks as a tab on the title bar of the window you are working in, the one VoiceOver is on when VoiceOver is running. Ask it for something, such as "turn on the speed limit", and it finds the control, even one the app never named, then shows you exactly what it will do. It acts only after you approve.
+Shep is a small dog that lives in your Mac's menu bar. When you call it, it leaves its home under the menu bar and docks as a tab on the title bar of the window you are working in, the one VoiceOver is on when VoiceOver is running. Ask it for something, such as "turn on the speed limit", and it finds the control, even one the app never named, then shows you exactly what it will do. It acts only after you approve.
 
 It was built for the Meta Global AI Developer Hackathon (Oct 26 to Nov 4, 2026). The model that names controls and picks the target is **Muse Glimmer 30B**, Meta's open-weights model, running on your own Mac.
 
@@ -11,9 +11,13 @@ It was built for the Meta Global AI Developer Hackathon (Oct 26 to Nov 4, 2026).
 | Say **"Hey Shep"** | Off by default: Settings > Calling and voice > *Listen for "Hey Shep"*. The microphone is read by on-device speech recognition only; if your Mac cannot recognise your language on-device, Shep does not listen at all. Audio is never written to disk and transcripts are never logged. After the match, say your request; it ends after 1.5 s of silence (6 s if nothing was heard). |
 | Hold **Right Option** | Push to talk: hold about a quarter of a second and speak; let go to send. Right Command or Right Control can be chosen instead in Settings. |
 | Press **Control-Shift-Command-Space** | Global shortcut, no extra permission. It was chosen because Control-Option is VoiceOver's own modifier and Control-Option-Space is the input-source shortcut. Other presets are in Settings. |
-| Menu bar | **Call Shep**, **Fix This Screen**, **Send Shep Home**. Clicking the doghouse calls Shep too. |
+| Menu bar | **Call Shep**, **Fix This Screen**, **Send Shep Home**. With VoiceOver, Shep's home indicator is a button ("Shep's home") that calls Shep. |
 
 Escape or **Send Shep Home** sends it back; it also goes home after about 20 seconds without activity, or after a task. With Reduce Motion on it fades instead of travelling.
+
+**Home.** While it sleeps Shep is a small dark indicator. On a Mac with a notch it is a slim black chin exactly as wide as the notch, hanging just below the menu bar, with a paw on the left and a status mark (asleep, waking, out) on the right; on a Mac without a notch it is a small pill at the top centre. It is click-through and never covers the menu bar. While Shep sleeps nothing is tracked.
+
+**Short feedback.** Shep says "On it." when it starts looking and "Done." when a step is done, then gives one short bark; otherwise "Cancelled." or "Nothing to do." It does not narrate the screen. With VoiceOver running these are high-priority VoiceOver announcements, Shep stays home until your spoken question is over (so nothing talks over you), and it does not say "Shep is here." after a question.
 
 ## Where Shep goes: VoiceOver first
 
@@ -31,8 +35,8 @@ The order is `FocusTargetPolicy` in ShepCore and is unit-tested; the app logs wh
 2. **Look.** It takes a screenshot of that one window and runs a local detector (OmniParser v3 `icon_detect`) to find controls the app does not list, such as icon-only buttons or a checkbox named only by its tooltip. Boxes that duplicate a listed control are merged away.
 3. **Name and pick.** Muse Glimmer names the controls found on the screenshot and picks the one your request is about (schema-constrained JSON, thinking off, temperature 0).
 4. **Check the pick.** The model's pick is evidence, not a decision. `ProposalRanker` scores every control against your words. A pick that covers a whole pane, or that only exists on the screenshot while exactly one listed control clearly matches your request, gives way to that control.
-5. **Ask.** The proposal appears in the dog's card with **Approve** and **Cancel**, for example: *Press the checkbox "Speed Limit overrides the total bandwidth limits with its own limits." (named by its tooltip)? Shep asks before every action.* With VoiceOver running, Shep's replies are announced by VoiceOver.
-6. **Act.** Only after Approve. An Accessibility press is tried first. A mouse click happens only after approval, only if the window has not moved and nothing covers the spot, and the pointer is put back afterwards. When a fix finishes, Shep gives one short synthesized woof (it can be turned off).
+5. **Ask.** The proposal appears on a one-line native card under the tab with **Approve** and **Deny**, for example: *Press the checkbox "Speed Limit"?* Deny is the cancel choice, Escape picks it, and neither is the default. Keyboard focus starts on the card's text, so VoiceOver reads it first; VO-Right reaches Approve and VO-Space presses it.
+6. **Act.** Only after Approve. An Accessibility press is tried first. A mouse click happens only after approval, only if the window has not moved and nothing covers the spot, and the pointer is put back afterwards. When a fix finishes, Shep gives one short recorded bark (CC0, credited in `NOTICE`; it can be turned off).
 
 ### What Shep refuses
 - There is **no auto-approve** anywhere: every action that is not refused asks (`ApprovalPolicy`, tested).
@@ -68,7 +72,9 @@ No model weights are in this repository. Optional, untested providers are listed
 scripts/build.sh                     # xcodegen + xcodebuild -> build/Build/Products/Debug/Shep.app
 
 # 2. Muse Glimmer: put an MLX build of meta-models/Muse-Glimmer-30B at ~/models/Muse-Glimmer-30B-4bit
-#    (or set GLIMMER_MODEL), then start it, or point Shep at a server you already run.
+#    (or set GLIMMER_MODEL), give it a Python environment with mlx-vlm (the script uses ~/models/venv,
+#    or set GLIMMER_VENV), then start it, or point Shep at a server you already run.
+python3 -m venv ~/models/venv && ~/models/venv/bin/pip install mlx-vlm
 scripts/glimmer-server.sh            # or: SHEP_GLIMMER_URL=http://127.0.0.1:<port>/v1 when launching Shep
 
 # 3. Detector sidecar (see docs/detector.md for the weights)
@@ -94,6 +100,7 @@ It records only the target window and Shep's own overlay, writes the clip outsid
 
 ```sh
 scripts/test.sh      # check-rules, the shell-script tests, then the ShepCore XCTest suite
+build/Build/Products/Debug/Shep.app/Contents/MacOS/Shep --ui-snapshot <dir>   # renders Shep's own views to PNGs and checks them
 ```
 
 `tools/shep-dog/run-tests.sh` tests the dog page separately and needs a checkout of bloub (see [docs/DEVELOPER.md](docs/DEVELOPER.md)).
@@ -129,6 +136,7 @@ More: [docs/DEVELOPER.md](docs/DEVELOPER.md) for every launch flag, the demo rec
 - **bloub** goop dog avatar, MIT, Copyright (c) 2026 Jérémy Perret, https://github.com/jeremy-prt/bloub (branch `dog-goop`, commit 6b59465). See `NOTICE` and `Resources/shep-dog/ATTRIBUTION.md`.
 - **OmniParser v3** `icon_detect` (MIT), optional `icon_caption` (MIT, a Florence-2 fine-tune) and **SAM 3 by Meta** (SAM License, optional). The user supplies or downloads the weights; none are in this repository. The OmniParser v2 `icon_detect` weights (AGPL-3.0) are never used.
 - **Muse Glimmer** by Meta, Apache 2.0, downloaded by the user.
+- **"Single Dog Bark"** by kwahmah_02 (Freesound 277058), CC0 1.0, used as the finish bark. See `NOTICE`.
 - Vite (MIT) helper code inlined in the built pages. Build and test tools that are not redistributed: Vite, vite-plugin-singlefile, happy-dom, jiti. See `NOTICE`.
 
 ## License

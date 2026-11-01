@@ -73,7 +73,7 @@ final class PressDemoTests: XCTestCase {
     func testTheCardForATooltipOnlyCheckbox() {
         let action = PressDemo.proposal(for: turtle, bundleID: bundle)
         XCTAssertEqual(action.kind, .axPress)
-        XCTAssertEqual(PressDemo.preview(action), "Press the checkbox \"\(tip)\" (named by its tooltip)?\nShep asks before every action.")
+        XCTAssertEqual(PressDemo.preview(action), "Press the checkbox \"Speed Limit\"?")   // one short line: the tooltip's leading words
     }
 
     func testThePreviewIsTheSameTextTheRunnerAsks() async {

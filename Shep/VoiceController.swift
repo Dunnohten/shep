@@ -16,6 +16,8 @@ final class VoiceController: VoiceCancelling {
 
     private var session = VoiceSession()
     private let input = VoiceInput()
+    /// The recording aid (Debug builds, SHEP_DEMO_* set): a voice file and a local whisper-cli instead of the microphone. Nil normally.
+    private let demoInput: DemoVoiceInput? = DemoVoiceInput.fromEnvironment().map { DemoVoiceInput(config: $0) }
     private let speaker = ReplySpeaker()
     private let permissions: PermissionModel
     private unowned let overlay: OverlayController
@@ -33,6 +35,10 @@ final class VoiceController: VoiceCancelling {
         input.onPartial = { [weak self] text in self?.send(.partial(text)) }
         input.onFinal = { [weak self] text in self?.send(.final(text)) }
         input.onFailure = { [weak self] message in self?.send(.failed(message)) }
+        demoInput?.onPartial = { [weak self] text in self?.send(.partial(text)) }
+        demoInput?.onFinal = { [weak self] text in self?.send(.final(text)) }
+        demoInput?.onFailure = { [weak self] message in self?.send(.failed(message)) }
+        if demoInput != nil { session.finalWaitSeconds = VoiceTimings.demoFinalWaitSeconds }
         speaker.onStart = { [weak self] in self?.send(.speechStarted) }
         speaker.onEnd = { [weak self] in self?.send(.speechEnded) }
     }
@@ -44,8 +50,13 @@ final class VoiceController: VoiceCancelling {
 
     /// The same entry as the talk key. `endOnSilence` is for a call started by the wake word, where no key is held.
     func press(endOnSilence: Bool = false) {
-        permissions.refresh()
-        send(.press(microphone: permissions.microphoneState, speech: permissions.speechState))
+        if demoInput != nil {
+            // The demo voice uses neither the microphone nor Speech Recognition: nothing to check, nothing to ask for.
+            send(.press(microphone: .granted, speech: .granted))
+        } else {
+            permissions.refresh()
+            send(.press(microphone: permissions.microphoneState, speech: permissions.speechState))
+        }
         if endOnSilence, session.state == .listening {
             self.endOnSilence = true
             heardText = false
@@ -68,6 +79,9 @@ final class VoiceController: VoiceCancelling {
         speaker.speak(text)
     }
 
+    /// A reply is being spoken right now (the finish bark waits for it).
+    var isSpeakingReply: Bool { speaker.isSpeaking }
+
     /// Silence now: the mute toggle, and Shep going home (ShepCoordinator.onStopSpeaking: sendHome, any dismiss, undock).
     func stopSpeaking() { speaker.stop() }
 
@@ -78,7 +92,10 @@ final class VoiceController: VoiceCancelling {
             heardText = true
             lastHeard = ProcessInfo.processInfo.systemUptime
         }
-        for effect in session.handle(event) { perform(effect) }
+        let effects = session.handle(event)
+        // Shep keeps its VoiceOver announcements back while the question is being asked (until the final transcript).
+        overlay.setCallerSpeaking(session.state != .idle)
+        for effect in effects { perform(effect) }
         onActivityChange?()
     }
 
@@ -97,11 +114,13 @@ final class VoiceController: VoiceCancelling {
     private func perform(_ effect: VoiceEffect) {
         switch effect {
         case .startCapture:
-            do { try input.start() } catch { send(.failed(error.localizedDescription)) }
+            do {
+                if let demo = demoInput { try demo.start() } else { try input.start() }
+            } catch { send(.failed(error.localizedDescription)) }
         case .stopCapture:
-            input.stop()
+            if let demo = demoInput { demo.stop() } else { input.stop() }
         case .cancelCapture:
-            input.cancel()
+            if let demo = demoInput { demo.cancel() } else { input.cancel() }
         case .showPartial(let text):
             overlay.showTranscript(text)
         case .clearPartial:

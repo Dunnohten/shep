@@ -1,16 +1,15 @@
 import AppKit
 import ShepCore
 
-/// The dog's accessibility face. While the ask field is closed the whole dog is ONE element: a button called
-/// "Shep, assistant" that opens the ask field. While it is open the page's own controls (field, buttons) are exposed instead.
+/// The dog's accessibility face: the whole dog is ONE element, a button called "Shep, assistant" that opens the ask field.
+/// The cards (reply, approval, ask field) are native views in their own panel and carry their own accessibility.
 @MainActor
 final class DogContainerView: NSView {
     var onPress: (() -> Void)?
     /// The dog's frame in screen coordinates, so VoiceOver's cursor sits on the dog and not on the whole panel.
     var dogScreenFrame = NSRect.zero
-    var pageControlsExposed = false
 
-    override func isAccessibilityElement() -> Bool { !pageControlsExposed }
+    override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .button }
     override func accessibilityLabel() -> String? { "Shep, assistant" }
     override func accessibilityHelp() -> String? { "Opens the ask field. Shep's replies are announced." }
@@ -91,23 +90,11 @@ final class TabShapeView: NSView {
 }
 
 /// Borderless, non-activating panel that holds the tab on the window's title bar, with the dog in it.
-/// It is larger than the tab so the say() card never clips; everything but the tab (and the card while it shows) is
-/// click-through (`ignoresMouseEvents`, toggled by OverlayController). It takes key status only while `acceptsTextInput` is true.
+/// It is larger than the tab so the head can peek above it without clipping; everything but the tab is click-through
+/// (`ignoresMouseEvents`, toggled by OverlayController). It never takes key status: the cards are a panel of their own.
 @MainActor
 final class DockOverlay: NSPanel {
-    var acceptsTextInput = false
-    /// Set while an approval card shows: Escape cancels it even if the web view does not hand the key to the page.
-    var onEscape: (() -> Void)?
-
-    override var canBecomeKey: Bool { acceptsTextInput }
-
-    override func sendEvent(_ event: NSEvent) {
-        if event.type == .keyDown, event.keyCode == 53, let onEscape {   // 53 = Escape
-            onEscape()
-            return
-        }
-        super.sendEvent(event)
-    }
+    override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
     let dogView: DogWebView

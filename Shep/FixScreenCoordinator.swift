@@ -76,7 +76,7 @@ final class FixScreenCoordinator {
     func run(request: String?) async {
         let hadRequest = !(request ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         guard !running else {
-            overlay.say("Still working on the last one.")
+            overlay.say(Brief.busy)
             logEnd(outcome: .busy, failure: .busy, result: nil, actionNote: nil, hadRequest: hadRequest)
             return
         }
@@ -118,6 +118,7 @@ final class FixScreenCoordinator {
         }
         onLive?(LiveLog.targetFront(app.bundleIdentifier))   // what this run reads, for any live run
         overlay.setState(.thinking)
+        overlay.say(Brief.onIt)
 
         let maybeSnapshot: AXSnapshot? = await Task.detached { AXReader.read(pid: pid) }.value
         if runGate.isLeft { return }   // the target left while it was being read: nothing else is looked at, nothing is said
@@ -212,13 +213,11 @@ final class FixScreenCoordinator {
         }
         if result.proposals.isEmpty {
             end.outcome = .nothingToOffer
-            let why = result.explanation.isEmpty ? "I found nothing to offer." : result.explanation
-            overlay.say(result.summary + " " + why, milliseconds: 6000)
+            overlay.say(Brief.nothing)
             return end
         }
-        overlay.say("\(result.summary) I'd offer \(result.proposals.count) step\(result.proposals.count == 1 ? "" : "s").", milliseconds: 3000)
-        try? await Task.sleep(nanoseconds: 1_500_000_000)
         if runGate.isLeft { return end }
+        cardPeers = snapshot.controls + result.controls   // the whole AX list, not only the capped one the provider saw
         let walked = await walk(result.proposals, fallback: result.fallbackProposals, fallbackRanked: result.fallbackRanked,
                                 snapshot: snapshot, windowNumber: windowNumber)
         end.finished = walked.finished
@@ -251,6 +250,7 @@ final class FixScreenCoordinator {
         while i < proposals.count {
             let p = proposals[i]
             if Task.isCancelled || runGate.isLeft { return (false, .cancelled, note) }
+            cardWasTooLong = false
             let outcome = await runner.run(p.action)
             if runGate.isLeft { return (false, .cancelled, note) }   // left during the card or the action: nothing more is said or asked
             if !fellBack, let step = ProposalFallback.step(after: outcome, of: p, fallback: fallback, ranked: fallbackRanked) {
@@ -274,8 +274,11 @@ final class FixScreenCoordinator {
                 }
             }
             switch outcome {
-            case .done(let what): anyDone = true; last = .done; overlay.say("Done: \(what).")
-            case .declined: overlay.say("Cancelled."); return (false, .declined, note)
+            case .done: anyDone = true; last = .done; overlay.say(Brief.done)   // what was done is in the log and the outcome
+            case .declined where cardWasTooLong:
+                // No card was shown and nobody chose: a refusal that says why, not "Cancelled."
+                overlay.say(Brief.tooLong); return (false, .refused, Brief.tooLong)
+            case .declined: overlay.say(Brief.cancelled); return (false, .declined, note)
             case .cancelled: return (false, .cancelled, note)
             case .refused(let why): last = .refused; note = why; overlay.say(why)
             case .failed(let why): last = .failed; note = why; overlay.say(why, milliseconds: 5000)
@@ -285,7 +288,7 @@ final class FixScreenCoordinator {
                 return (false, .needsFreshApproval, why)
             }
             if i < proposals.count - 1 {
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                try? await Task.sleep(nanoseconds: UInt64(Brief.stepGapSeconds * 1_000_000_000))
                 if Task.isCancelled { return (false, .cancelled, note) }
             }
             i += 1
@@ -307,13 +310,19 @@ final class FixScreenCoordinator {
         onLiveEvent?(.outcome(outcome))
     }
 
+    /// The window's controls for the run being offered: approval cards shorten a name only when no other control shares it.
+    private var cardPeers: [Control] = []
+    /// Set by `confirm` when the card text was too long to show whole, so the walk reports a refusal, not a denial.
+    private var cardWasTooLong = false
+
     private func confirm(_ request: ApprovalRequest, appName: String) async -> Bool {
         if targetLeftNow() { return false }   // no card for a run whose target left (read from the live front app, not only from a flag)
-        let text = request.cardText
-        let title = request.action.dialogTitle(appName: appName)
+        let text = request.cardText(peers: cardPeers)
+        guard Brief.cardFits(text) else { cardWasTooLong = true; return false }   // never approve what the card could not show; the walk says why
+        let title = request.action.dialogTitle(appName: appName, peers: cardPeers)
         onLive?(LiveLog.cardShown(text))
         onLiveEvent?(.cardShown)
-        let choice = await overlay.ask(text, choices: [(id: "approve", label: "Approve"), (id: "cancel", label: "Cancel")], title: title)
+        let choice = await overlay.ask(text, choices: Brief.approvalChoices, title: title)
         // Whatever the person chose in the card; Escape (nil) counts as cancel. An Approve is looked at once more against the live front
         // app: one that raced with the target leaving is not an approval, and is not reported as one.
         let approved = choice == "approve"

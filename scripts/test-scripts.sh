@@ -1027,7 +1027,7 @@ gcheck() { # gcheck <state dir> [extra env...] : runs only the validation mode
   local d="$1"; shift
   env "$@" GLIMMER_STATE_DIR="$d" bash scripts/glimmer-server.sh --check-state-dir
 }
-gmode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
+gmode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }   # GNU first: GNU stat -f prints filesystem text before failing
 gcheck "$gl/fresh/nested" >"$tmp/gl-out" 2>&1; eq "glimmer: a missing state dir is created and accepted" 0 "$?"
 eq "glimmer: the created dir is mode 700" 700 "$(gmode "$gl/fresh/nested")"
 gcheck "$gl/fresh/nested" >/dev/null 2>&1; eq "glimmer: an existing 700 dir is accepted again" 0 "$?"

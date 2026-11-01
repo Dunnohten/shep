@@ -269,7 +269,8 @@ final class VisionApprovalGateTests: XCTestCase {
         let a = ProposedAction(control: vision, kind: .clickPoint, bundleID: "com.apple.Maps")
         XCTAssertTrue(a.summary.contains("Click the button \"Zoom in\""))
         guard case .required(let why) = ApprovalPolicy.requirement(for: a) else { return XCTFail("must ask") }
-        XCTAssertTrue(why.contains("mouse pointer"))
+        XCTAssertTrue(why.contains("mouse"))   // the screenshot-only reason now comes first: it says why it is a mouse click
+        XCTAssertTrue(ApprovalRequest(action: a, reason: why).cardText.contains("With the mouse: seen only on screen."))
         XCTAssertTrue(vision.line.hasSuffix("(found on screen)"))
     }
 }

@@ -21,7 +21,7 @@ public enum FixScreenReport {
             let need: String
             switch p.requirement {
             case .refused(let why): need = "refused: \(why)"
-            case .required(let why): need = "needs approval: \(why)"
+            case .required(let why): need = why.isEmpty ? "needs approval" : "needs approval: \(why)"
             }
             lines.append("  \(p.action.summary) [\(need)]")
         }

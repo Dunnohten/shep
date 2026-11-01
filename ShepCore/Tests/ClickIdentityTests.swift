@@ -168,9 +168,9 @@ final class ClickIdentityTests: XCTestCase {
 
     func testTheCardNamesWhatIsUnderTheSpot() {
         let request = ApprovalRequest(action: visionAction(identity("Gear")), reason: "why")
-        XCTAssertTrue(request.cardText.contains("what is under that spot: button \"Gear\""), request.cardText)
+        XCTAssertTrue(request.cardText.contains("Under it: button \"Gear\"."), request.cardText)
         let plain = ApprovalRequest(action: visionAction(nil), reason: "why")
-        XCTAssertFalse(plain.cardText.contains("under that spot"))
+        XCTAssertFalse(plain.cardText.contains("Under it"))
     }
 }
 
@@ -242,7 +242,7 @@ final class ClickIdentityRunnerTests: XCTestCase {
         let out = await ActionRunner(executor: e, approve: a.callback()).run(ProposedAction(control: found, kind: .clickPoint, bundleID: "com.example"))
         XCTAssertEqual(out, .done("Click the button \"Gear\" (found on screen)"))
         XCTAssertEqual(a.asked.count, 1)
-        XCTAssertTrue(a.asked[0].cardText.contains("what is under that spot: button \"Gear\""), a.asked[0].cardText)
+        XCTAssertTrue(a.asked[0].cardText.contains("Under it: button \"Gear\"."), a.asked[0].cardText)
         XCTAssertEqual(a.asked[0].action.hitIdentity, gear)
         XCTAssertEqual(e.lastClicked?.hitIdentity, gear, "the token was made for the action with the identity in it")
     }

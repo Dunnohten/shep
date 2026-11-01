@@ -82,6 +82,16 @@ final class TargetRecheckTests: XCTestCase {
         XCTAssertEqual(type.dialogTitle(appName: "Notes"), "Shep wants to type into Search in Notes")
     }
 
+    func testDialogTitleUsesTheShortNameSoVoiceOverReachesTheQuestionSooner() {
+        // VoiceOver speaks the dialog's name before the focused text; a whole tooltip there delayed the question (a live VoiceOver run).
+        let turtle = Control(index: 1, role: "AXCheckBox", value: "0", help: "Speed Limit overrides the total bandwidth limits with its own limits.", actions: ["AXPress"])
+        let press = ProposedAction(control: turtle, kind: .axPress, bundleID: "org.m0k.transmission")
+        XCTAssertEqual(press.dialogTitle(appName: "Transmission"), "Shep wants to press Speed Limit in Transmission")
+        let other = Control(index: 2, role: "AXCheckBox", value: "0", help: "Speed Limit for uploads only.", actions: ["AXPress"])
+        XCTAssertEqual(press.dialogTitle(appName: "Transmission", peers: [turtle, other]),
+                       "Shep wants to press \(turtle.label) in Transmission")   // two would read the same: the full name
+    }
+
     // MARK: P2-3 tooltip-only controls
 
     let turtle = Control(index: 1, role: "AXCheckBox", help: "Speed Limit overrides the total bandwidth limits", actions: ["AXPress"], pathID: "0/9")

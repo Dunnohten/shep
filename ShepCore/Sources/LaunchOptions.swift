@@ -16,7 +16,10 @@ public struct LaunchOptions: Equatable {
     /// `--demo-backdrop` (with `--demo-script=cycle`): Shep draws its own plain backdrop behind everything it shows, so a recording
     /// of that rectangle holds only Shep-owned pixels and the test window.
     public var demoBackdrop = false
-    /// `--export-bark=<path.wav>`: write the synthesized woof as a WAV file and exit.
+    /// `--ui-snapshot <dir>` (or `=<dir>`): developer-only. Render Shep's own views offscreen to PNG files in that directory and exit.
+    /// No status item, hotkeys, microphone, tracker or on-screen window. nil without the flag or with an unusable value.
+    public var uiSnapshotDir: String?
+    /// `--export-bark=<path.wav>`: write the recorded bark (`BarkSound`) as a WAV file and exit.
     public var exportBarkPath: String?
     /// `--ax-read-once <pid|bundle-id>`: read the app's windows through Accessibility, print what was seen, exit. Read-only.
     public var axReadOnceTarget: String?
@@ -88,6 +91,7 @@ public struct LaunchOptions: Equatable {
         o.toolTitle = argumentValue("--title", in: arguments)
         o.toolFrame = argumentValue("--frame", in: arguments).flatMap { CoordinateSpace.parseFrame($0) }
         o.approveFlag = arguments.contains("--approve")
+        o.uiSnapshotDir = argumentValue("--ui-snapshot", in: arguments)
         o.liveRequest = liveRequestText(arguments: arguments, environment: environment)
         let wantedRecord = liveRecordValue(arguments: arguments, environment: environment)
         o.liveRecordSeconds = liveRecordSeconds(arguments: arguments, environment: environment)

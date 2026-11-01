@@ -62,6 +62,8 @@ public enum VoiceTimings {
     public static let maxHoldSeconds: TimeInterval = 30
     /// After release, how long to wait for the final text before using the last partial.
     public static let finalWaitSeconds: TimeInterval = 2
+    /// The recording aid's wait (`DemoVoiceInput`): its final text comes once the file has played and whisper-cli is done.
+    public static let demoFinalWaitSeconds: TimeInterval = 20
     /// The most text that becomes a request.
     public static let maxRequestCharacters = 500
 }
@@ -71,6 +73,9 @@ public struct VoiceSession: Equatable, Sendable {
     /// The latest text heard in this session.
     public private(set) var transcript = ""
     public private(set) var speaking = false
+
+    /// How long the session waits for the final text after the key comes up.
+    public var finalWaitSeconds: TimeInterval = VoiceTimings.finalWaitSeconds
 
     public init() {}
 
@@ -143,7 +148,7 @@ public struct VoiceSession: Equatable, Sendable {
 
     private mutating func beginFinishing() -> [VoiceEffect] {
         state = .finishing
-        return [.cancelTimeout, .stopCapture, .armTimeout(VoiceTimings.finalWaitSeconds)]
+        return [.cancelTimeout, .stopCapture, .armTimeout(finalWaitSeconds)]
     }
 
     /// Ends the session with `text` as the request, or with an apology when there is nothing.

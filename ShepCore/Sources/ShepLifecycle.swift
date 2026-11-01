@@ -21,6 +21,30 @@ public enum LifecycleState: String, CaseIterable, Equatable {
 /// What woke Shep. Every source ends in the same wake.
 public enum CallSource: String, Equatable {
     case doghouse, menu, hotkey, pushToTalk, demo
+
+    /// Whether the coordinator brings the previously frontmost app back before Shep looks for a window. Only the doghouse
+    /// indicator: VoiceOver reaches it by bringing Shep itself to the front, and with Shep in front the press would find no
+    /// window. Push-to-talk and "Hey Shep" refocus in their own call path, before listening starts; the menu, the shortcut and
+    /// the demo leave the front app as it is.
+    public var refocusesPreviousApp: Bool { self == .doghouse }
+}
+
+/// Written for Shep.
+/// Activation is asynchronous: after a doghouse press hands focus back to the previous app, the end of the wake must not
+/// decide "no window" while that app is still coming to the front. It polls every `pollSeconds` until a target appears or
+/// `limitSeconds` have passed since the wake ended; a call with no refocus (or one macOS refused) decides at once. Pure.
+public enum RefocusWait {
+    public static let limitSeconds: TimeInterval = 1.5
+    public static let pollSeconds: TimeInterval = 0.1
+
+    /// A refocus is pending for this call: the source asks for one and `activate()` accepted the request.
+    public static func requested(source: CallSource, activationAccepted: Bool) -> Bool {
+        source.refocusesPreviousApp && activationAccepted
+    }
+
+    public static func keepWaiting(refocusRequested: Bool, hasTarget: Bool, waited: TimeInterval) -> Bool {
+        refocusRequested && !hasTarget && waited < limitSeconds
+    }
 }
 
 public enum LifecycleEvent: Equatable {

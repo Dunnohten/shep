@@ -16,8 +16,8 @@ private final class HouseMessageProxy: NSObject, WKScriptMessageHandler {
 }
 
 /// The doghouse in a transparent WKWebView (Resources/shep-dog/house.html): a goop-style house with Shep asleep in the door.
-/// Swift talks to the page through the `house` bridge: setTheme, setMode, setActive, setReduceMotion. The page itself runs
-/// at 8 fps asleep, 30 while waking or curling up, and not at all when away or paused.
+/// Only the setup window's header uses it now; Shep's home in the menu bar is the native HomePanel.
+/// Swift talks to the page through the `house` bridge: setTheme, setMode, setActive, setReduceMotion.
 @MainActor
 final class HouseWebView: WKWebView, WKNavigationDelegate {
     private let proxy: HouseMessageProxy
@@ -68,37 +68,6 @@ final class HouseWebView: WKWebView, WKNavigationDelegate {
     }
 }
 
-/// The doghouse's accessibility face and hit shape. One element: a button. Only the house itself (roof and body) takes the
-/// mouse; the transparent rest of the panel returns nil from the hit test, so it never swallows a click meant for the app below.
-@MainActor
-final class HouseContainerView: NSView {
-    var onPress: (() -> Void)?
-    static let label = "Shep's doghouse, click to call Shep"
-
-    override func isAccessibilityElement() -> Bool { true }
-    override func accessibilityRole() -> NSAccessibility.Role? { .button }
-    override func accessibilityLabel() -> String? { Self.label }
-    override func accessibilityHelp() -> String? { "Wakes Shep and sends it to the window in front. The shortcut and the Call Shep menu item do the same." }
-    override func accessibilityPerformPress() -> Bool {
-        onPress?()
-        return true
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    /// `point` is in the superview's coordinates; the art's space is top-left origin.
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        let local = convert(point, from: superview)
-        guard bounds.contains(local) else { return nil }
-        let art = CGPoint(x: local.x, y: isFlipped ? local.y : bounds.height - local.y)
-        return HomeGeometry.isOnHouse(art) ? self : nil
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        onPress?()
-    }
-}
-
 /// The doghouse as a header inside a SwiftUI window (setup), with Shep asleep in it. Decorative for VoiceOver: the label says
 /// what it is and the window's own controls carry the meaning.
 struct HouseHeaderView: NSViewRepresentable {
@@ -108,7 +77,7 @@ struct HouseHeaderView: NSViewRepresentable {
         let view = HouseWebView()
         view.setTheme(themeName)
         view.setMode(.asleep)
-        view.frame = NSRect(x: 0, y: 0, width: HomeGeometry.size.width, height: HomeGeometry.size.height)
+        view.frame = NSRect(x: 0, y: 0, width: HomeGeometry.headerSize.width, height: HomeGeometry.headerSize.height)
         view.setAccessibilityElement(true)
         view.setAccessibilityRole(.image)
         view.setAccessibilityLabel("Shep's doghouse, with Shep asleep inside")
@@ -117,43 +86,5 @@ struct HouseHeaderView: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         (nsView as? HouseWebView)?.setTheme(themeName)
-    }
-}
-
-/// Small, dim, non-activating panel that holds the doghouse: below the notch, or under Shep's status item, on every Space.
-@MainActor
-final class HomePanel: NSPanel {
-    let house = HouseWebView()
-    let container = HouseContainerView()
-
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
-
-    /// Out of the way: the doghouse is at 70 % until it is needed.
-    static let dimAlpha: CGFloat = 0.7
-
-    init() {
-        let size = NSSize(width: HomeGeometry.size.width, height: HomeGeometry.size.height)
-        super.init(contentRect: NSRect(origin: .zero, size: size), styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
-        level = .floating
-        // No fullScreenAuxiliary: in a full-screen Space there is no menu bar, and the house stays out of the app's way.
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = false
-        hidesOnDeactivate = false
-        isReleasedWhenClosed = false
-        isFloatingPanel = true
-        becomesKeyOnlyIfNeeded = true
-        ignoresMouseEvents = false
-        alphaValue = Self.dimAlpha
-        sharingType = ScreenPrivacy.sharingType
-        container.frame = NSRect(origin: .zero, size: size)
-        container.autoresizingMask = [.width, .height]
-        house.frame = container.bounds
-        house.autoresizingMask = [.width, .height]
-        container.addSubview(house)
-        contentView = container
-        setAccessibilityLabel(HouseContainerView.label)
     }
 }

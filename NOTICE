@@ -74,3 +74,13 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+----------------------------------------------------------------------------
+"Single Dog Bark" by kwahmah_02 (the finish bark)
+  Source:  https://freesound.org/people/kwahmah_02/sounds/277058/  (Freesound sound 277058, June 21 2015)
+  License: CC0 1.0 Universal (public domain dedication), https://creativecommons.org/publicdomain/zero/1.0/ . No attribution
+           is required; it is credited here anyway.
+  Use:     ShepCore/Sources/BarkSound.swift stores it as a WAV (22.05 kHz mono 16-bit, sha256
+           1ab91f4eb6d4fbbf7eb43079bea2f49b106e2186662a4dad790328596bcf50cc), made from Freesound's preview
+           (277058_4486188-hq.mp3, sha256 af621c68568e6c5178d38e2a464eddd21be8b5822475b29f5ebfe10f5feb1a25): the first
+           0.26 s, high-passed at 120 Hz, faded out over the last 60 ms, peak-normalized to -1 dBFS.

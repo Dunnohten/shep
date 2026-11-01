@@ -16,6 +16,12 @@ final class TravelPathTests: XCTestCase {
         screens.contains { $0.insetBy(dx: -0.001, dy: -0.001).contains(p) }
     }
 
+    func testTheTravellerIsNotStretchedLikeGoo() {
+        XCTAssertLessThanOrEqual(TravelPath.maxStretch, 1.06)   // a hint of velocity at most
+        XCTAssertGreaterThanOrEqual(TravelPath.squash(stretch: TravelPath.maxStretch), 0.97)
+        XCTAssertGreaterThanOrEqual(TravelPath.maxStretch, 1)
+    }
+
     func testEndpoints() {
         let p = TravelPath.arc(from: CGPoint(x: 720, y: 860), to: CGPoint(x: 300, y: 300), screens: one)
         XCTAssertEqual(p.point(at: 0).x, 720, accuracy: 1e-9)

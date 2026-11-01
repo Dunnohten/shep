@@ -22,6 +22,13 @@ struct OnboardingView: View {
                 }
             }
 
+            // Said once here instead of on every approval card and every spoken question.
+            Label(OnboardingCopy.asksFirst, systemImage: "hand.raised")
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(OnboardingCopy.asksFirst)
+
             PermissionRow(
                 title: "Accessibility",
                 detail: "Find the front window so Shep can sit on its title bar. Required.",

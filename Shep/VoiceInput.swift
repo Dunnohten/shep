@@ -130,24 +130,50 @@ final class ReplySpeaker: NSObject, AVSpeechSynthesizerDelegate {
         synthesizer.delegate = self
     }
 
+    /// True from `speak` until the utterance finishes or is cancelled (set at once, not when the delegate hears it start).
+    var isSpeaking: Bool { !pending.isEmpty }
+    /// The utterances spoken and not yet finished. A late callback for one dropped by `stop()` finds nothing to remove.
+    /// Held strongly, so an identity can never be reused while it is listed.
+    private var pending: [AVSpeechUtterance] = []
+
+    /// The newest reply replaces any still playing ("On it." never delays "Done.", so the finish wait covers the line it
+    /// is waiting for). Speech is continuous across the swap: `onEnd` is not reported for the dropped line, and its late
+    /// cancel callback finds nothing in `pending`.
     func speak(_ text: String) {
         let utterance = AVSpeechUtterance(string: VoiceReplyPolicy.utterance(text))
+        if !pending.isEmpty {
+            pending.removeAll()
+            synthesizer.stopSpeaking(at: .immediate)
+        }
+        pending.append(utterance)
         synthesizer.speak(utterance)   // no voice set: the system voice
     }
 
     func stop() {
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
+        let wasSpeaking = !pending.isEmpty
+        pending.removeAll()
+        if wasSpeaking { onEnd?() }   // reported here, once: the late callbacks for these utterances are ignored
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.onStart?() }
+        Task { @MainActor in
+            guard self.pending.contains(where: { $0 === utterance }) else { return }   // dropped by stop() before this arrived
+            self.onStart?()
+        }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.onEnd?() }
+        Task { @MainActor in self.ended(utterance) }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.onEnd?() }
+        Task { @MainActor in self.ended(utterance) }
+    }
+
+    private func ended(_ utterance: AVSpeechUtterance) {
+        guard pending.contains(where: { $0 === utterance }) else { return }   // dropped by stop(): already reported
+        pending.removeAll { $0 === utterance }
+        if pending.isEmpty { onEnd?() }   // the end of speech, not of one queued utterance while another still plays
     }
 }

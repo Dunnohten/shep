@@ -24,6 +24,25 @@ final class LaunchOptionsTests: XCTestCase {
         XCTAssertEqual(bad.state, .idle)
     }
 
+    func testUISnapshotFlag() {
+        XCTAssertNil(LaunchOptions.parse(arguments: ["Shep"], environment: [:]).uiSnapshotDir)
+        XCTAssertEqual(LaunchOptions.parse(arguments: ["Shep", "--ui-snapshot", "/tmp/out"], environment: [:]).uiSnapshotDir, "/tmp/out")
+        XCTAssertEqual(LaunchOptions.parse(arguments: ["Shep", "--ui-snapshot=/tmp/out"], environment: [:]).uiSnapshotDir, "/tmp/out")
+        XCTAssertNil(LaunchOptions.parse(arguments: ["Shep", "--ui-snapshot"], environment: [:]).uiSnapshotDir)
+        XCTAssertNil(LaunchOptions.parse(arguments: ["Shep", "--ui-snapshot", "--dock-demo"], environment: [:]).uiSnapshotDir)
+        XCTAssertNil(LaunchOptions.parse(arguments: ["Shep", "--ui-snapshot="], environment: [:]).uiSnapshotDir)
+    }
+
+    func testTheExampleNotchedDisplayIsTheDocumentedOne() {
+        let s = HomeScreen.exampleNotched
+        XCTAssertEqual(s.frame, CGRect(x: 0, y: 0, width: 1512, height: 982))
+        XCTAssertEqual(s.auxLeft, CGRect(x: 0, y: 950, width: 663.5, height: 32))
+        XCTAssertEqual(s.auxRight, CGRect(x: 848.5, y: 950, width: 663.5, height: 32))
+        XCTAssertEqual(s.notch?.minX, 663.5)
+        XCTAssertEqual(s.notch?.maxX, 848.5)
+        XCTAssertEqual(s.notch?.bottom, 950)
+    }
+
     func testDemoScriptFlag() {
         XCTAssertFalse(LaunchOptions.parse(arguments: ["Shep"], environment: [:]).demoScript)
         XCTAssertTrue(LaunchOptions.parse(arguments: ["Shep", "--dock-demo", "--demo-script"], environment: [:]).demoScript)

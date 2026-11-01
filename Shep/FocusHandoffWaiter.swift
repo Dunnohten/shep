@@ -13,6 +13,7 @@ final class FocusHandoffWaiter {
     private var startedAt: TimeInterval = 0
     private var token: NSObjectProtocol?
     private var timer: Timer?
+    private var stopped = false
 
     /// The handoff has decided (and its call has been made).
     var isDone: Bool { handoff.outcome != nil }
@@ -43,7 +44,14 @@ final class FocusHandoffWaiter {
         run(handoff.observe(frontmostPID: frontmostPID, elapsed: ProcessInfo.processInfo.systemUptime - startedAt))
     }
 
+    /// A newer call replaces this one: stop watching, and nothing more is performed.
+    func stop() {
+        stopped = true
+        stopWatching()
+    }
+
     private func run(_ effects: [FocusHandoffEffect]) {
+        if stopped { return }
         if isDone { stopWatching() }
         for effect in effects {
             if case .activate = effect { app.activate(options: []) } else { perform(effect) }

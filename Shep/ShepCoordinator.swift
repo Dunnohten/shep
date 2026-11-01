@@ -28,7 +28,6 @@ final class ShepCoordinator {
     private var dogIsOut = false
     private var leavePoint: CGPoint?
     private var houseHidden = false
-    private var screenAsleep = false
     private var observers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
     private var cycleSignals: [DispatchSourceSignal] = []
     private var cycleRunning = false
@@ -43,6 +42,10 @@ final class ShepCoordinator {
     var finishSettings: () -> (barkWhenDone: Bool, volume: Double) = { (true, ShepSettings.defaultBarkVolume) }
     private let barkPlayer = BarkPlayer()
     private var finishToken = 0
+    /// Whether this trip docks with "Shep is here." (set by the call that sets Shep off, read once when it docks).
+    private var arrival = ArrivalAnnouncement()
+    /// Shep's own spoken reply is going (VoiceController.isSpeakingReply): the bark waits for it, up to `FinishBeat.replyTimeout`.
+    var replySpeaking: () -> Bool = { false }
 
     /// Shep is leaving (sent home, undocked, dismissed): whatever is being spoken stops. Wired to VoiceController.stopSpeaking.
     var onStopSpeaking: (() -> Void)?
@@ -50,6 +53,11 @@ final class ShepCoordinator {
     weak var voice: VoiceCancelling?
     /// Cancels the running fix task when arrival fails (`LifecycleEffect.cancelFixTask`).
     var onCancelFixTask: (() -> Void)?
+    /// Brings back the app that was in front before Shep, when Shep itself is in front (see `CallSource.refocusesPreviousApp`).
+    /// Returns whether an activation was requested and accepted (false when nothing needed refocusing or macOS refused).
+    var refocusPreviousApp: (() -> Bool)?
+    /// A refocus was requested for the current call; the end of the wake waits for it (`RefocusWait`).
+    private var refocusPending = false
 
     var state: LifecycleState { lifecycle.state }
     var isHouseHidden: Bool { houseHidden }
@@ -61,17 +69,17 @@ final class ShepCoordinator {
         self.statusItemFrame = statusItemFrame
         self.lifecycle = ShepLifecycle(state: .asleep, reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         guard enabled else { return }
-        home.container.onPress = { [weak self] in self?.call(.doghouse) }
-        home.house.setTheme(theme.name)
-        home.house.setReduceMotion(lifecycle.reduceMotion)
-        home.house.setMode(.asleep)
-        home.house.setPose(.asleep, reduceMotion: lifecycle.reduceMotion)
+        home.indicator.onPress = { [weak self] in self?.call(.doghouse) }
+        home.indicator.setReduceMotion(lifecycle.reduceMotion)
+        home.indicator.setMode(.asleep)
         traveller.setTheme(theme.name)
         traveller.setBar(hex: TabTint.fallbackHex(dark: TabTint.isDark))
         escape.onEscape = { [weak self] in
             guard let self, !self.overlay.isPillOpen else { return }   // the ask field takes Escape itself
             self.send(.dismiss)
         }
+        overlay.announcementFallback = { [weak self] in self?.home }
+        home.indicator.postsChanges = { [weak overlay] in overlay?.allowsStateNotifications ?? true }   // "Shep went home to sleep." is said from the doghouse
         overlay.onWindowLost = { [weak self] lost in self?.windowLostChanged(lost) }
         overlay.onPillChanged = { [weak self] open in self?.send(open ? .taskStarted : .taskDone) }
         overlay.onActivity = { [weak self] in self?.send(.call(.doghouse)) }
@@ -79,26 +87,24 @@ final class ShepCoordinator {
 
     // MARK: start, theme, house
 
-    /// Puts the doghouse up and starts listening for what changes the screens. Nothing is tracked yet: Shep is asleep.
+    /// Puts Shep's home indicator up and starts listening for what changes the screens. Nothing is tracked yet: Shep is asleep.
     func start() {
         guard enabled else { return }
         overlay.start(tracking: false)
         overlay.disallowPresentation()
         placeHome()
         observe()
-        // The status item gets its window a moment after launch; place the house again once it exists.
+        // The status item gets its window a moment after launch; place the indicator again once it exists.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.placeHome() }
     }
 
     func setTheme(_ theme: ShepTheme) {
-        home.house.setTheme(theme.name)
         traveller.setTheme(theme.name)
     }
 
     func setHouseHidden(_ hidden: Bool) {
         houseHidden = hidden
         if hidden { home.orderOut(nil) } else if placement != nil { home.orderFrontRegardless() }
-        updateHouseActivity()
     }
 
     private func placeHome() {
@@ -109,9 +115,8 @@ final class ShepCoordinator {
         }
         guard let p = HomeGeometry.place(screens: screens, statusItem: statusItemFrame()) else { return }
         placement = p
-        if home.frame != p.rect { home.setFrame(p.rect, display: true) }
+        home.apply(p)
         if !houseHidden && !home.isVisible { home.orderFrontRegardless() }
-        updateHouseActivity()
         if verbose, p != loggedPlacement {
             loggedPlacement = p
             print("[shep] home \(p.logDescription(primaryScreenHeight: NSScreen.screens.first?.frame.height ?? 0))")
@@ -124,50 +129,36 @@ final class ShepCoordinator {
             Task { @MainActor in self?.placeHome() }
         }
         observers.append((center, t1))
-        let t2 = center.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: home, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.updateHouseActivity() }
-        }
-        observers.append((center, t2))
         let ws = NSWorkspace.shared.notificationCenter
-        for name in [NSWorkspace.screensDidSleepNotification, NSWorkspace.willSleepNotification] {
-            let t = ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.screenAsleep = true; self?.updateHouseActivity() }
-            }
-            observers.append((ws, t))
-        }
-        for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.didWakeNotification] {
-            let t = ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.screenAsleep = false; self?.updateHouseActivity() }
-            }
-            observers.append((ws, t))
-        }
         let t3 = ws.addObserver(forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 let on = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-                self?.home.house.setReduceMotion(on)
+                self?.home.indicator.setReduceMotion(on)
+                self?.home.indicator.updateSurface()
                 self?.send(.reduceMotion(on))
             }
         }
         observers.append((ws, t3))
     }
 
-    /// Nothing is rendered while the house is hidden, covered, or the screen sleeps.
-    private func updateHouseActivity() {
-        let on = !houseHidden && home.isVisible && home.occlusionState.contains(.visible) && !screenAsleep
-        home.house.setActive(on)
-    }
-
     // MARK: calling and sending home
 
-    /// Wakes Shep (from any source). `then` runs once Shep is on the window; at once if it already is.
-    func call(_ source: CallSource, then action: (() -> Void)? = nil) {
+    /// Wakes Shep (from any source). `then` runs once Shep is on the window; at once if it already is. `forQuestion`: the call
+    /// is made for a question the caller has just asked ("On it." follows), so Shep docks without "Shep is here.".
+    func call(_ source: CallSource, forQuestion: Bool = false, then action: (() -> Void)? = nil) {
         guard enabled else { action?(); return }
+        if source.refocusesPreviousApp {
+            refocusPending = RefocusWait.requested(source: source, activationAccepted: refocusPreviousApp?() ?? false)
+        } else {
+            refocusPending = false
+        }
         if lifecycle.state == .working {
             send(.call(source))
             action?()
             return
         }
         if let action { pendingAfterArrival = action }
+        arrival.call(from: lifecycle.state, forQuestion: forQuestion)
         send(.call(source))
     }
 
@@ -181,6 +172,7 @@ final class ShepCoordinator {
     func send(_ event: LifecycleEvent) {
         guard enabled else { return }
         if event == .dismiss || event == .arrivalFailed { onStopSpeaking?() }
+        if case .taskStarted = event { finishToken += 1 }   // a new task (field or request): the finish beat's pending hop, bark and walk home are dropped
         if lifecycle.state == .working, let p = overlay.dogCenter { leavePoint = p }   // where the walk home starts
         let before = lifecycle.state
         let effects = lifecycle.handle(event)
@@ -227,18 +219,28 @@ final class ShepCoordinator {
         let mine = epoch
         dogIsOut = false
         leavePoint = nil   // the walk home must not start from an earlier visit
-        home.house.setMode(.waking)
-        home.house.setPose(.waking, reduceMotion: reduced)   // one ear twitches, then both pop up
+        home.indicator.setMode(.waking)
         demoState("wake")
         after(reduced ? LifecycleTimings.reducedWakeSeconds : LifecycleTimings.wakeSeconds, epoch: mine) { [weak self] in
-            guard let self else { return }
-            let hasTarget = self.overlay.travelTarget() != nil
-            if !hasTarget {
-                self.pendingAfterArrival = nil
-                self.announce(AXIsProcessTrusted() ? "There is no window for me to sit on." : "I need Accessibility permission to find your window. Open Shep Setup from the menu.")
-            }
-            self.send(.wakeFinished(hasTarget: hasTarget))
+            self?.finishWake(epoch: mine, waited: 0)
         }
+    }
+
+    /// The end of the wake: a window to go to, or "no window". After a refocus it polls while the previous app comes to the front.
+    private func finishWake(epoch mine: Int, waited: TimeInterval) {
+        let hasTarget = overlay.travelTarget() != nil
+        if RefocusWait.keepWaiting(refocusRequested: refocusPending, hasTarget: hasTarget, waited: waited) {
+            after(RefocusWait.pollSeconds, epoch: mine) { [weak self] in
+                self?.finishWake(epoch: mine, waited: waited + RefocusWait.pollSeconds)
+            }
+            return
+        }
+        refocusPending = false
+        if !hasTarget {
+            pendingAfterArrival = nil
+            announce(AXIsProcessTrusted() ? "There is no window for me to sit on." : "I need Accessibility permission to find your window. Open Shep Setup from the menu.", kind: .line)
+        }
+        send(.wakeFinished(hasTarget: hasTarget))
     }
 
     private func beginTravel(reduced: Bool) {
@@ -257,7 +259,7 @@ final class ShepCoordinator {
         dogIsOut = true
         if reduced {
             // Reduce Motion: no travel. The sleeping dog has faded out at the door; the dock fades in at the target.
-            home.house.setMode(.away)
+            home.indicator.setMode(.away)
             after(0.05, epoch: mine) { [weak self] in self?.send(.arrived) }
             return
         }
@@ -265,9 +267,9 @@ final class ShepCoordinator {
         let duration = path.duration
         logTravel("tab", path)
         traveller.fly(path.samples(duration: duration, screens: screens)) {}
-        // The house's dog hands over to the traveller (which fades in over its first tenth); the dock starts rising a tenth
+        // The traveller fades in over its first tenth as the indicator turns to "out"; the dock starts rising a tenth
         // before the traveller lands, so the two cross-fade.
-        after(0.1, epoch: mine) { [weak self] in self?.home.house.setMode(.away) }
+        after(0.1, epoch: mine) { [weak self] in self?.home.indicator.setMode(.away) }
         after(duration * (1 - TravelPath.fadeShare), epoch: mine) { [weak self] in self?.send(.arrived) }
     }
 
@@ -276,7 +278,7 @@ final class ShepCoordinator {
         overlay.setPose(.idle)
         demoState("docked")
         escape.start()
-        announce("Shep is here.")
+        if arrival.docked() { announce("Shep is here.", kind: .status) }
         if let action = pendingAfterArrival {
             pendingAfterArrival = nil
             after(0.5, epoch: epoch) { action() }   // let the head finish rising first
@@ -316,14 +318,13 @@ final class ShepCoordinator {
         pendingAfterArrival = nil
         if dogIsOut {
             dogIsOut = false
-            home.house.setMode(.entering)   // appears, turns round, curls up, eyes close
-            home.house.setPose(.asleep, reduceMotion: lifecycle.reduceMotion)   // ears droop flat
-            after(LifecycleTimings.enterSeconds, epoch: epoch) { [weak self] in self?.home.house.setMode(.asleep) }
+            home.indicator.setMode(.entering)
+            after(LifecycleTimings.enterSeconds, epoch: epoch) { [weak self] in self?.home.indicator.setMode(.asleep) }
         } else {
-            home.house.setMode(.asleep)
+            home.indicator.setMode(.asleep)
         }
         demoState("asleep")
-        announce("Shep went home to sleep.")
+        announce("Shep went home to sleep.", kind: .status)
     }
 
     private func armTimeout(_ seconds: TimeInterval) {
@@ -356,37 +357,46 @@ final class ShepCoordinator {
         print("[shep] travel to=\(to) \(path.logDescription(primaryScreenHeight: NSScreen.screens.first?.frame.height ?? 0))")
     }
 
-    /// VoiceOver speaks this; with it off nothing happens.
-    private func announce(_ text: String) {
-        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
-                             userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+    /// VoiceOver speaks this (through the overlay: never during the caller's question, on one of Shep's windows); with it off
+    /// nothing happens.
+    private func announce(_ text: String, kind: AnnouncementKind) {
+        overlay.announce(text, kind: kind)
     }
 
     // MARK: the finish beat
 
     /// A fix finished: ears up and "Done." for VoiceOver, then one hop and one woof together, a moment's hold, then home.
-    /// With VoiceOver running the woof waits until VoiceOver has finished speaking (or 1.5 s). Reduce Motion: no hop.
+    /// With VoiceOver running the woof waits until VoiceOver has finished speaking (or 1.5 s); while Shep's own spoken "Done." is
+    /// going it waits for that to end (or 2.5 s), so the bark is heard on its own. Reduce Motion: no hop.
     func finishBeat() {
         guard enabled, lifecycle.state == .working else { return }
         finishToken += 1
-        let started = ProcessInfo.processInfo.systemUptime
+        let now = ProcessInfo.processInfo.systemUptime
         let voiceOver = NSWorkspace.shared.isVoiceOverEnabled
         timeoutWork?.cancel()
         timeoutWork = nil
         demoState("finish")
         overlay.setPose(.finish)
-        overlay.announceDone()
-        planFinish(started: started, voiceOver: voiceOver, voiceOverFinishedAt: nil)
+        overlay.announceDone()   // said once: the walk's "Done." card a moment ago already said it
+        // With VoiceOver the bark is timed from when "Done." went out, so it lands after VoiceOver has said it.
+        let started = voiceOver ? FinishBeat.voiceOverStart(beatStartedAt: now, donePostedAt: overlay.doneAnnouncedAt()) : now
+        let speaking = !voiceOver && replySpeaking()
+        planFinish(started: started, voiceOver: voiceOver, voiceOverFinishedAt: nil, replySpeaking: speaking)
+        if speaking { waitForReply(started: started, token: finishToken) }
         if voiceOver {
-            let token = finishToken
+            let token = finishToken   // after planFinish (which moves the token on), so a finished "Done." can replan the beat
             var observer: NSObjectProtocol?
             observer = NotificationCenter.default.addObserver(forName: Notification.Name("NSAccessibilityAnnouncementDidFinishNotification"),
-                                                              object: nil, queue: .main) { [weak self] _ in
+                                                              object: nil, queue: .main) { [weak self] note in
+                let info = note.userInfo
+                let text = (info?[NSAccessibility.NotificationUserInfoKey.announcement.rawValue] ?? info?["NSAccessibilityAnnouncementKey"]) as? String
                 MainActor.assumeIsolated {
+                    guard let self, self.finishToken == token,
+                          let at = FinishBeat.voiceOverFinished(announcement: text,
+                                                                elapsed: ProcessInfo.processInfo.systemUptime - started) else { return }
                     if let o = observer { NotificationCenter.default.removeObserver(o) }
                     observer = nil
-                    guard let self, self.finishToken == token else { return }
-                    self.planFinish(started: started, voiceOver: true, voiceOverFinishedAt: ProcessInfo.processInfo.systemUptime - started)
+                    self.planFinish(started: started, voiceOver: true, voiceOverFinishedAt: at)
                 }
             }
             // The notification may never come: stop listening after the timeout (the planned steps already ran).
@@ -397,13 +407,28 @@ final class ShepCoordinator {
         }
     }
 
-    /// Schedules hop, woof and the walk home from the steps; a new plan (VoiceOver finished early) replaces the old one.
-    private func planFinish(started: TimeInterval, voiceOver: Bool, voiceOverFinishedAt: TimeInterval?) {
+    /// Polls the spoken reply; when it ends before the timeout, the beat is planned again from that moment.
+    private func waitForReply(started: TimeInterval, token: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.finishToken == token else { return }
+                let elapsed = ProcessInfo.processInfo.systemUptime - started
+                if elapsed >= FinishBeat.replyTimeout { return }   // the plan made at the start already has the timeout
+                if self.replySpeaking() { self.waitForReply(started: started, token: token); return }
+                self.planFinish(started: started, voiceOver: false, voiceOverFinishedAt: nil, replySpeaking: true, replyFinishedAt: elapsed)
+            }
+        }
+    }
+
+    /// Schedules hop, woof and the walk home from the steps; a new plan (VoiceOver or the spoken reply finished early) replaces the old one.
+    private func planFinish(started: TimeInterval, voiceOver: Bool, voiceOverFinishedAt: TimeInterval?,
+                            replySpeaking: Bool = false, replyFinishedAt: TimeInterval? = nil) {
         finishToken += 1
         let token = finishToken
         let cfg = finishSettings()
         let steps = FinishBeat.steps(reduceMotion: lifecycle.reduceMotion, barkEnabled: cfg.barkWhenDone,
-                                     voiceOverRunning: voiceOver, voiceOverFinishedAt: voiceOverFinishedAt)
+                                     voiceOverRunning: voiceOver, voiceOverFinishedAt: voiceOverFinishedAt,
+                                     replySpeaking: replySpeaking, replyFinishedAt: replyFinishedAt)
         for step in steps where step.action != .earsUp && step.action != .announceDone {
             let wait = max(0, step.at - (ProcessInfo.processInfo.systemUptime - started))
             DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in

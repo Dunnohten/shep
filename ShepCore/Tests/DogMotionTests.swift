@@ -3,6 +3,11 @@ import XCTest
 @testable import ShepCore
 
 final class DogMotionMachineTests: XCTestCase {
+    func testTheDockSlideIsAnEaseInOutOfAboutAQuarterSecond() {
+        XCTAssertGreaterThanOrEqual(DockMotionPlanner.slideSeconds, 0.2)
+        XCTAssertLessThanOrEqual(DockMotionPlanner.slideSeconds, 0.3)
+    }
+
     func testStartsIdleAndStatesFollowEvents() {
         var m = DogMotionMachine()
         XCTAssertEqual(m.state, .idle)

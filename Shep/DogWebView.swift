@@ -15,7 +15,8 @@ private final class DogMessageProxy: NSObject, WKScriptMessageHandler {
 }
 
 /// The bloub goop dog in a transparent WKWebView. Swift talks to the page through the `shep` JS bridge
-/// (Resources/shep-dog/index.html): setTheme, setState, say, ask, openPill, closeCard, setLayout, setBar.
+/// (Resources/shep-dog/index.html): setTheme, setState, setLayout, setBar and the motion calls. It draws only the dog: the
+/// cards are native views (CardController).
 @MainActor
 final class DogWebView: WKWebView, WKNavigationDelegate {
     var onClick: (() -> Void)?
@@ -64,11 +65,7 @@ final class DogWebView: WKWebView, WKNavigationDelegate {
     func setState(_ state: ShepDogState) { run("shep.setState(\(JSLiteral.string(state.rawValue)))") }
     /// Ears, eyes and head tilt: the pose table is ShepCore's `DogPose`; the page springs toward it (static under Reduce Motion).
     func setPose(_ name: PoseName, reduceMotion: Bool) { run("shep.setPose(\(PoseBridge.json(for: name, reduceMotion: reduceMotion)))") }
-    func say(_ text: String, milliseconds: Int = 3000) { run("shep.say(\(JSLiteral.string(text)), \(milliseconds))") }
     func setBar(hex: String?) { run("shep.setBar(\(hex.map(JSLiteral.string) ?? "null"))") }
-    func openPill() { run("shep.openPill()") }
-    /// The pill, read-only, with what push-to-talk has heard so far.
-    func showTranscript(_ text: String) { run("shep.showTranscript(\(JSLiteral.string(text)))") }
 
     // Motion: the page runs one animation loop; these pause it, switch it to the calm fallback, and feed it events.
     func setActive(_ on: Bool) { run("shep.setActive(\(on ? "true" : "false"))") }
@@ -81,14 +78,13 @@ final class DogWebView: WKWebView, WKNavigationDelegate {
     /// A little hop: the page lifts the dog `points` and sets it down again over `seconds` (nothing under Reduce Motion).
     func hop(points: Double, seconds: Double) { run("shep.hop(\(String(format: "%.1f", points)), \(String(format: "%.3f", seconds * 1000)))") }
     func blink() { run("shep.blink()") }
-    func closeCard() { run("shep.closeCard()") }
 
     /// The traveller: where the dog sits in this view (top-left origin), with no card.
     func setDogBox(x: Int, y: Int, width: Int, height: Int) {
         run("shep.setLayout(\(x), \(y), \(width), \(height), true)")
     }
 
-    /// Goo-stretch travel: the page stretches the dog along its velocity and fades it, frame by frame, while Swift moves the panel.
+    /// Travel: the page stretches the dog a hint along its velocity (the factors come from TravelPath) and fades it, frame by frame, while Swift moves the panel.
     func travel(_ samples: [TravelSample]) {
         guard samples.count >= 2, let last = samples.last else { return }
         let rows = samples.map { s in
@@ -98,13 +94,6 @@ final class DogWebView: WKWebView, WKNavigationDelegate {
     }
 
     func endTravel() { run("shep.endTravel()") }
-
-    /// A card with buttons; the page posts `{choice: id}` when one is clicked.
-    /// `title` names the dialog for VoiceOver ("Shep wants to press Save in TextEdit"); the page moves focus to Approve.
-    func ask(_ text: String, choices: [(id: String, label: String)], title: String) {
-        let items = choices.map { "{id:\(JSLiteral.string($0.id)),label:\(JSLiteral.string($0.label))}" }.joined(separator: ",")
-        run("shep.ask(\(JSLiteral.string(text)), [\(items)], \(JSLiteral.string(title)))")
-    }
 
     func setLayout(_ l: PanelLayout) {
         lastLayout = l

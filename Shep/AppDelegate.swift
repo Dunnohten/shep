@@ -65,6 +65,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if let dir = options.uiSnapshotDir {
+            // Developer-only: render Shep's own views offscreen to PNG files and exit. Nothing else is started.
+            UISnapshot.run(outputDirectory: dir)
+            return
+        }
         if let path = options.fixScreenOncePath {
             // Headless one-shot: run the pipeline on a PNG, print the report, exit. No overlay, no status item.
             setvbuf(stdout, nil, _IOLBF, 0)
@@ -107,8 +112,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if let path = options.exportBarkPath {
-            // Headless: write the synthesized woof (default volume) as a WAV file and exit. Used by scripts/record-cycle.sh.
-            let data = WavWriter.data(samples: BarkSynth.samples(volume: ShepSettings.defaultBarkVolume))
+            // Headless: write the bark (default volume) as a WAV file and exit. Used by scripts/record-cycle.sh.
+            let data = WavWriter.data(samples: BarkSound.samples(volume: ShepSettings.defaultBarkVolume), sampleRate: BarkSound.sampleRate)
             do {
                 try data.write(to: URL(fileURLWithPath: path))
                 print("[shep] wrote bark \(path) (\(data.count) bytes)")
@@ -156,7 +161,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shep.onStateChange = { [weak self] in self?.refreshMenu(); self?.refreshWakeWord() }
         shep.finishSettings = { [weak self] in
             let s = self?.settings.settings ?? ShepSettings.defaults
-            return (s.barkWhenDone, s.barkVolume)
+            let effects = BarkPolicy.systemSoundEffects(globalValue: UserDefaults.standard.persistentDomain(forName: UserDefaults.globalDomain)?["com.apple.sound.uiaudio.enabled"])
+            let volume = BarkPolicy.volume(barkWhenDone: s.barkWhenDone, barkVolume: s.barkVolume, speakReplies: s.speakReplies, systemSoundEffects: effects)
+            return (volume != nil, volume ?? 0)
         }
         fix.onFinished = { [weak shep] in shep?.finishBeat() }
         if options.liveRequest != nil {
@@ -180,9 +187,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onSubmit = { [weak self] text in self?.runFixScreen(request: text) }
         // Voice: hold the talk key, speak, let go; the final transcript is the request. Replies are spoken (unless muted or VoiceOver is on).
         let talk = VoiceController(permissions: permissions, overlay: controller)
-        talk.onSubmit = { [weak self] text in self?.runFixScreen(request: text) }
+        talk.onSubmit = { [weak self] text in
+            guard let self else { return }
+            // Held while a focus handoff is still running; under VoiceOver Shep comes out with it ("On it." follows).
+            self.runTalk(self.talkGate.questionEnded(text))
+        }
         talk.showSetup = { [weak self] in self?.showOnboarding() }
         talk.speakReplies = { [weak self] in self?.settings.settings.speakReplies ?? true }
+        shep.replySpeaking = { [weak talk] in talk?.isSpeakingReply ?? false }
         controller.onReply = { [weak talk] text in talk?.reply(text) }
         voice = talk
         shep.voice = talk
@@ -213,31 +225,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Global shortcut and push-to-talk key: both call Shep from the doghouse.
     private func installCallInputs(_ shep: ShepCoordinator) {
         hotKeys.onPress = { [weak shep] in shep?.call(.hotkey) }
+        shep.refocusPreviousApp = { [weak self] in self?.refocusIfShepIsInFront() ?? false }
         registerCallShortcut(settings.settings.callShortcut)
         pushToTalk.setKey(settings.settings.pushToTalkKey)
         // Holding the key starts listening at once (nothing said while Shep crosses the screen is lost) and wakes Shep from the doghouse.
         pushToTalk.onBegan = { [weak self] in self?.beginTalk(fromWakeWord: false) }
         pushToTalk.onEnded = { [weak self] in self?.voice?.release(); self?.refreshWakeWord() }
-        pushToTalk.onCancelled = { [weak self] in self?.voice?.cancel(); self?.refreshWakeWord() }
+        pushToTalk.onCancelled = { [weak self] in self?.talkGate.cancel(); self?.voice?.cancel(); self?.refreshWakeWord() }
         pushToTalk.start()
         watchFrontApp()
     }
 
     /// The voice call path: start listening at once (nothing said while Shep crosses the screen is lost) and wake Shep from the
+    /// When Shep wakes and when the spoken request goes to the pipeline (`TalkCallGate`): the focus handoff and the end of the
+    /// question can finish in either order. A question that ends without a request leaves Shep at home under VoiceOver; the next
+    /// call starts a new generation.
+    private var talkGate = TalkCallGate()
+
+    private func runTalk(_ effects: [TalkCallEffect]) {
+        for effect in effects {
+            switch effect {
+            case .call(let forQuestion): coordinator?.call(.pushToTalk, forQuestion: forQuestion)
+            case .submit(let text): runFixScreen(request: text)
+            }
+        }
+    }
+
     /// doghouse. Holding the talk key and "Hey Shep" both come here; only the wake word has no key to let go of.
     /// From Shep's own window the call waits for the focus handoff (`FocusHandoff`), so the dock check sees the previous app.
     private func beginTalk(fromWakeWord: Bool) {
         voice?.press(endOnSilence: fromWakeWord)
-        if let waiting = focusHandoff, !waiting.isDone {
-            refreshWakeWord()   // the handoff in flight makes the call
-            return
+        if let waiting = focusHandoff {
+            // A new press replaces a handoff still in flight: its callbacks do nothing, and the old call's held text is dropped.
+            if !waiting.isDone { waiting.stop(); talkGate.cancel() }
+            focusHandoff = nil
         }
-        if let waiter = focusHandoffIfShepIsInFront() {
+        let waiter = focusHandoffIfShepIsInFront(generation: talkGate.generation + 1)
+        let begun = talkGate.begin(handoff: waiter != nil, voiceOverRunning: NSWorkspace.shared.isVoiceOverEnabled)
+        if let waiter {
             focusHandoff = waiter
             waiter.start()
-        } else {
-            coordinator?.call(.pushToTalk)
         }
+        runTalk(begun.effects)   // without VoiceOver and without a handoff: Shep wakes now; otherwise later (see TalkCallGate)
         refreshWakeWord()
     }
 
@@ -259,7 +288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// A call made while Shep's own window (Settings, Setup) is in front would find no window and send Shep straight back to
     /// sleep (`frontmost is Shep itself`). The app that was in front before Shep gets the focus back first (`WakeWordPolicy`).
-    private func focusHandoffIfShepIsInFront() -> FocusHandoffWaiter? {
+    private func focusHandoffIfShepIsInFront(generation: Int) -> FocusHandoffWaiter? {
         let own = ProcessInfo.processInfo.processIdentifier
         let other = lastOtherFront.flatMap { $0.isTerminated ? nil : $0 }
         guard let pid = WakeWordPolicy.pidToRefocus(frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
@@ -269,15 +298,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch effect {
             case .log(let line): print(line)
             case .refreshTracker: self?.overlay?.refreshTracking()
-            case .call:
-                self?.coordinator?.call(.pushToTalk)
-                self?.refreshWakeWord()
-            case .cancelVoice:   // the user left: the voice session opened for this call ends with it
+            case .call:   // confirmed or timed out: the gate decides whether Shep wakes now and sends a held request
+                guard let self else { return }
+                self.runTalk(self.talkGate.handoffCalled(generation: generation))
+                self.refreshWakeWord()
+            case .cancelVoice:   // the user left: the voice session opened for this call ends with it, and a held request is dropped
+                self?.talkGate.handoffAbandoned(generation: generation)
                 self?.voice?.cancel()
                 self?.refreshWakeWord()
             case .activate: break   // done by the waiter
             }
         }
+    }
+
+    /// The doghouse press path (`ShepCoordinator.refocusPreviousApp`): with Shep's own window in front, the app that was in front
+    /// before Shep is brought back first. Returns whether an activation was requested and macOS accepted it (`RefocusWait`).
+    @discardableResult
+    private func refocusIfShepIsInFront() -> Bool {
+        let own = ProcessInfo.processInfo.processIdentifier
+        let other = lastOtherFront.flatMap { $0.isTerminated ? nil : $0 }
+        guard let pid = WakeWordPolicy.pidToRefocus(frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                                                    ownPID: own, lastOtherPID: other?.processIdentifier),
+              let app = other, app.processIdentifier == pid else { return false }
+        print(WakeLog.handoffRequested)   // the doghouse press does not wait through FocusHandoff; RefocusWait waits instead
+        return app.activate(options: [])
     }
 
     // MARK: Hey Shep
@@ -733,7 +777,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         home.isEnabled = lifecycle && (coordinator?.state ?? .asleep) != .asleep
         menu.addItem(home)
 
-        let toggle = NSMenuItem(title: (coordinator?.isHouseHidden ?? false) ? "Show Doghouse" : "Hide Doghouse", action: #selector(toggleDoghouse), keyEquivalent: "")
+        let toggle = NSMenuItem(title: (coordinator?.isHouseHidden ?? false) ? "Show Shep's Home" : "Hide Shep's Home", action: #selector(toggleDoghouse), keyEquivalent: "")
         toggle.target = self
         toggle.isEnabled = lifecycle
         menu.addItem(toggle)

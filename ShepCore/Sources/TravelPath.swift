@@ -3,7 +3,7 @@ import Foundation
 
 /// Written for Shep.
 /// The way Shep crosses the screen: a cubic Bezier arc between two points (the doghouse's door and the target), eased in
-/// and out, with the dog stretched along its velocity and squashed across it, like a drop of goo being thrown.
+/// and out, with the dog stretched along its velocity by a hint (a few per cent) and squashed across it to keep its area.
 /// Pure geometry in Cocoa screen coordinates (bottom-left origin, y up), no AppKit.
 
 /// Where Shep is going. `.control` is the hook for pointing at a control later.
@@ -60,7 +60,7 @@ public struct TravelPath: Equatable {
     public static let controlHover: CGFloat = 20
     /// Squash and stretch: stretch 1 at rest, up to `maxStretch` at `fullSpeed` points per second.
     public static let fullSpeed: Double = 1400
-    public static let maxStretch: Double = 1.75
+    public static let maxStretch: Double = 1.04
     /// Share of the travel (each end) over which the opacity ramps.
     public static let fadeShare: Double = 0.1
 

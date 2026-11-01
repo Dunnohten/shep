@@ -1,12 +1,12 @@
 import Foundation
 
 /// Written for Shep.
-/// The finish woof, synthesized from nothing at runtime: no audio assets, no samples. One short, soft dog bark of 200 ms:
+/// The old synthesized woof. What plays now is the recorded bark (`BarkSound`); this is only the fallback when that recording
+/// cannot be read (it always can: `BarkSoundTests`). Synthesized from nothing at runtime: no audio assets, no samples. One short, soft dog bark of 200 ms:
 /// a sawtooth source whose pitch falls quickly from 820 Hz to 380 Hz, shaped by two formant band-pass filters (about 1.15 kHz
 /// and 1.9 kHz) and a 200 Hz high-pass, so there is no low rumble. A 3 ms attack, a fast exponential decay and a little
 /// band-passed noise in the first 35 ms (the breath of the burst). No tremolo, no amplitude wobble of any kind.
 /// Deterministic: the same inputs give the same samples, always.
-/// The app renders these into an AVAudioPCMBuffer; `--export-bark=<path.wav>` writes them with `WavWriter`.
 public enum BarkSynth {
     public static let defaultSampleRate = 44_100
     public static let duration = 0.2
@@ -114,7 +114,7 @@ public enum WavWriter {
     }
 }
 
-/// The finish beat: when a fix is done, Shep says "Done." to VoiceOver, puts its ears up, hops and woofs once, holds the
+/// The finish beat: when a fix is done, Shep says "Done." to VoiceOver, puts its ears up, hops and barks once (`BarkSound`), holds the
 /// happy pose for a moment, then goes home. This is only the timeline and the hop's arc; the app carries the steps out.
 public enum FinishAction: String, Equatable, Sendable {
     /// The finish pose (ears up, eyes wide).
@@ -138,28 +138,43 @@ public enum FinishBeat {
     public static let announcement = "Done."
     /// The woof and the hop start together this long after the ears go up.
     public static let woofDelay: TimeInterval = 0.2
-    /// With VoiceOver running, the woof waits for VoiceOver to finish, but never longer than this.
-    public static let voiceOverTimeout: TimeInterval = 1.5
+    /// With VoiceOver running, the woof waits for VoiceOver to finish, but never longer than this: after "Done." has been
+    /// said (`doneSpokenSeconds`) with a clear gap, since VoiceOver lowers other sound while it speaks.
+    public static let voiceOverTimeout: TimeInterval = 2.2
     public static let hopSeconds: TimeInterval = 0.42
     public static let hopHeight = 9.0   // points
     /// Ears stay up this long after the woof before Shep goes home.
-    public static let holdAfterWoof: TimeInterval = 0.8
+    public static let holdAfterWoof: TimeInterval = 0.4
 
-    /// When the woof starts: `woofDelay` normally; with VoiceOver running, when VoiceOver finished (`voiceOverFinishedAt`, seconds from
-    /// the start), or the timeout when it has not said so. Never before `woofDelay`.
-    public static func woofTime(voiceOverRunning: Bool, voiceOverFinishedAt: TimeInterval? = nil) -> TimeInterval {
-        guard voiceOverRunning else { return woofDelay }
-        let done = voiceOverFinishedAt ?? voiceOverTimeout
-        return max(woofDelay, min(done, voiceOverTimeout))
+    /// With Shep's own spoken reply still going ("Done."), the woof waits for it to end, but never longer than this.
+    public static let replyTimeout: TimeInterval = 2.5
+
+    /// When the woof starts: `woofDelay` normally. With VoiceOver running, when VoiceOver finished (`voiceOverFinishedAt`, seconds
+    /// from the start), or the timeout when it has not said so. Likewise while Shep's spoken reply is going (`replySpeaking`; it is
+    /// never spoken with VoiceOver on), with `replyFinishedAt` and `replyTimeout`. Never before `woofDelay`.
+    public static func woofTime(voiceOverRunning: Bool, voiceOverFinishedAt: TimeInterval? = nil,
+                                replySpeaking: Bool = false, replyFinishedAt: TimeInterval? = nil) -> TimeInterval {
+        if voiceOverRunning {
+            let done = voiceOverFinishedAt ?? voiceOverTimeout
+            return max(woofDelay, min(done, voiceOverTimeout))
+        }
+        if replySpeaking {
+            let done = replyFinishedAt ?? replyTimeout
+            return max(woofDelay, min(done, replyTimeout))
+        }
+        return woofDelay
     }
 
     /// The steps, in order. Reduce Motion: no hop, ear pose and sound only.
-    public static func steps(reduceMotion: Bool, barkEnabled: Bool, voiceOverRunning: Bool, voiceOverFinishedAt: TimeInterval? = nil) -> [FinishStep] {
+    public static func steps(reduceMotion: Bool, barkEnabled: Bool, voiceOverRunning: Bool, voiceOverFinishedAt: TimeInterval? = nil,
+                             replySpeaking: Bool = false, replyFinishedAt: TimeInterval? = nil) -> [FinishStep] {
         var s: [FinishStep] = [FinishStep(at: 0, action: .earsUp), FinishStep(at: 0, action: .announceDone)]
-        let bark = woofTime(voiceOverRunning: voiceOverRunning, voiceOverFinishedAt: voiceOverFinishedAt)
+        let bark = woofTime(voiceOverRunning: voiceOverRunning, voiceOverFinishedAt: voiceOverFinishedAt,
+                            replySpeaking: replySpeaking, replyFinishedAt: replyFinishedAt)
         if !reduceMotion { s.append(FinishStep(at: bark, action: .hop)) }
         if barkEnabled { s.append(FinishStep(at: bark, action: .woof)) }
-        let motion = reduceMotion ? BarkSynth.duration : max(hopSeconds, BarkSynth.duration)   // the longer of the hop and the woof
+        let sound = barkEnabled ? BarkSound.duration : 0
+        let motion = reduceMotion ? sound : max(hopSeconds, sound)   // the longer of the hop and the bark
         s.append(FinishStep(at: bark + motion + holdAfterWoof, action: .goHome))
         return s
     }

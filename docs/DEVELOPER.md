@@ -70,10 +70,10 @@ Ears, eyes and head tilt come from one table in ShepCore (`DogPose`): asleep (ea
 
 ### The finish beat
 
-When a fix finishes (at least one action done, nothing cancelled) Shep puts its ears up, posts "Done." to VoiceOver, hops once and woofs once, holds the happy pose for a moment, then trots home and sleeps. The woof is synthesized in Shep's own code at runtime (`BarkSynth` in ShepCore: one short soft bark of 200 ms: a sawtooth whose pitch falls from 820 to 380 Hz through two formant band-pass filters (about 1.15 and 1.9 kHz) and a 250 Hz high-pass, a 3 ms attack, a fast exponential decay and a little band-passed noise in the first 35 ms, no tremolo, deterministic); there are no audio assets and no samples. The app renders the samples into an `AVAudioPCMBuffer` and plays it through `AVAudioEngine` and an `AVAudioPlayerNode` (`BarkPlayer`). With VoiceOver running the woof waits until VoiceOver has finished speaking, or 1.5 s at most, so Shep never talks over it. With Reduce Motion there is no hop: the ear pose and the sound only. The timeline is `FinishBeat` (tested).
+When a fix finishes (at least one action done, nothing cancelled) Shep puts its ears up, posts "Done." to VoiceOver, hops once and woofs once, holds the happy pose for a moment, then trots home and sleeps. The woof is one real recorded dog bark, "Single Dog Bark" by kwahmah_02 (Freesound 277058, CC0 1.0; see NOTICE), cut to 0.26 s and stored in code as a 22.05 kHz mono 16-bit WAV (`BarkSound` in ShepCore, its sha256 in NOTICE); it is the only sound file in the app. `BarkSynth` (a short synthesized woof) remains only as a fallback if that WAV cannot be decoded. The app plays the samples through `AVAudioEngine` and an `AVAudioPlayerNode` (`BarkPlayer`), so the system volume applies. With VoiceOver running the woof waits until VoiceOver has finished saying "Done.", or 2.2 s at most (`FinishBeat.voiceOverTimeout`), so Shep never talks over it. With Reduce Motion there is no hop: the ear pose and the sound only. The timeline is `FinishBeat` (tested).
 
 ```sh
-build/Build/Products/Debug/Shep.app/Contents/MacOS/Shep --export-bark=/tmp/bark.wav   # writes the woof as a 16-bit mono WAV and exits
+build/Build/Products/Debug/Shep.app/Contents/MacOS/Shep --export-bark=/tmp/bark.wav   # writes the recorded bark (default volume) as a 16-bit mono WAV and exits
 ```
 
 ### A clean cycle clip with sound
@@ -155,7 +155,7 @@ There is no scripting-bridge automation anywhere (`scripts/check-rules.sh`, run 
 | Meta (cloud) | read-only | "Available" only when `MODEL_API_KEY` is set; the key is never shown |
 | SAM 3 | off | "SAM 3 by Meta, under the SAM License; weights download with your own Hugging Face token." |
 | Hide from screen recordings | on | same as the menu item |
-| Bark when done | on | one short synthesized woof when a fix finishes |
+| Bark when done | on | one short recorded bark when a fix finishes |
 | Bark volume | 0.6 | slider 0 to 1 |
 | Open at login | off | `SMAppService.mainApp` (macOS 13+) |
 
@@ -217,7 +217,7 @@ Model weights are never in this repository: the user supplies them (`--omni-weig
 
 Rebuild the dog page (needs Node and a checkout of bloub with `node_modules`): `BLOUB_DIR=/path/to/bloub tools/shep-dog/build.sh`.
 
-The dog page tests (`tools/shep-dog/run-tests.sh`) read `BLOUB_DIR`: set it to your own checkout of [bloub](https://github.com/jeremy-prt/bloub) (branch `dog-goop`), a **sibling checkout outside this repo, not tracked by it**, used as a read-only reference. The scripts' built-in fallback path is one from the original build machine and will not exist on yours. They use `$BLOUB_DIR/node_modules/.bin/jiti`, else the newest `jiti` in its pnpm store (`node_modules/.pnpm/jiti@*/node_modules/jiti/lib/jiti-cli.mjs`, run with node), else print the restore command and exit 2: `cd $BLOUB_DIR && npm_config_manage_package_manager_versions=false npx --yes pnpm@10 install --frozen-lockfile --ignore-scripts` (pnpm 10 with node 20; pnpm 11 needs a newer node).
+The dog page tests (`tools/shep-dog/run-tests.sh`) read `BLOUB_DIR`: set it to your own checkout of [bloub](https://github.com/jeremy-prt/bloub) (branch `dog-goop`), a **sibling checkout outside this repo, not tracked by it**, used as a read-only reference. Without `BLOUB_DIR` the scripts use `bloub-dog` next to this repo (`../bloub-dog`) and exit 2 asking for `BLOUB_DIR` if it is not there. They use `$BLOUB_DIR/node_modules/.bin/jiti`, else the newest `jiti` in its pnpm store (`node_modules/.pnpm/jiti@*/node_modules/jiti/lib/jiti-cli.mjs`, run with node), else print the restore command and exit 2: `cd $BLOUB_DIR && npm_config_manage_package_manager_versions=false npx --yes pnpm@10 install --frozen-lockfile --ignore-scripts` (pnpm 10 with node 20; pnpm 11 needs a newer node).
 
 ## Renderer decision
 

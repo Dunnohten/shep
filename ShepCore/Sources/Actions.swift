@@ -66,12 +66,14 @@ public enum ApprovalPolicy {
             if !action.control.isTextInput { return .refused("That control isn't a text field.") }
             if action.control.fromVision { return .refused("Shep can't type into a control it only found on the screenshot.") }
         }
-        if case .clickPoint = action.kind { return .required("This uses the mouse pointer: after you approve, Shep clicks once at that spot.") }
+        // The specific mouse reasons come first, so the card can say why it is a mouse click.
         if afterAXFailure { return .required("The control didn't respond to Accessibility, so the only option left is a mouse click.") }
         if action.control.fromVision { return .required("Found on the screenshot, not in the app's own controls, so it can only be clicked with the mouse.") }
+        if case .clickPoint = action.kind { return .required("This uses the mouse pointer: after you approve, Shep clicks once at that spot.") }
         if case .setValue = action.kind { return .required("Typing changes what's in the field.") }
-        if ControlPolicy.isCommandRunner(action.bundleID) { return .required("This app can run commands, so Shep asks every time.") }
-        return .required("Shep asks before every action.")
+        if ControlPolicy.isCommandRunner(action.bundleID) { return .required("This app can run commands.") }
+        // The ordinary case needs no reason on the card: that Shep asks before every action is explained once, in Setup.
+        return .required("")
     }
 
     /// The action that proposing a control starts with: AX press when the app offers one, otherwise a click (which asks).
@@ -90,12 +92,10 @@ public struct ApprovalRequest: Equatable, Sendable {
     public var action: ProposedAction
     public var reason: String
 
-    /// The text of the approval card: the sentence as a question, then the reason.
-    public var cardText: String {
-        var text = "\(action.summary)?\n\(reason)"
-        if let id = action.hitIdentity { text += " (what is under that spot: \(id.cardText))" }
-        return text
-    }
+    /// The text of the approval card: one short line (`Brief.approvalLine`), with no other controls to compare names against.
+    public var cardText: String { Brief.approvalLine(self) }
+    /// The card line with the window's controls, so a name is shortened only when that stays unambiguous.
+    public func cardText(peers: [Control]) -> String { Brief.approvalLine(self, peers: peers) }
 }
 
 public enum ActionOutcome: Equatable, Sendable {
@@ -245,7 +245,8 @@ public struct ActionRunner: Sendable {
 
 extension ProposedAction {
     /// The name of the approval dialog for assistive technology: "Shep wants to press Save in TextEdit".
-    public func dialogTitle(appName: String) -> String {
+    /// `peers` as for the card line: a short name is used only when no other control in the window shares it.
+    public func dialogTitle(appName: String, peers: [Control] = []) -> String {
         let verb: String
         switch kind {
         case .axPress: verb = "press"
@@ -254,7 +255,7 @@ extension ProposedAction {
         case .setValue: verb = "type into"
         case .clickPoint: verb = "click"
         }
-        let name = control.label.isEmpty ? "a \(control.kind)" : control.label
+        let name = control.label.isEmpty ? "a \(control.kind)" : Brief.displayName(control, peers: peers)   // as on the card
         let app = appName.trimmingCharacters(in: .whitespacesAndNewlines)
         return "Shep wants to \(verb) \(name)" + (app.isEmpty ? "" : " in \(app)")
     }
