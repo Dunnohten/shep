@@ -149,14 +149,35 @@ final class WindowTracker {
 
     // MARK: focus sources
 
+    /// The window Shep docks on for app `pid` right now, by the dock's own focus order (VoiceOver's focus first when VoiceOver is
+    /// running, then the keyboard focus, then the pointer). Label repair reads this window, so it labels what the dog sits on.
+    static func focusedTargetWindow(pid: pid_t) -> AXUIElement? {
+        let appEl = AXUIElementCreateApplication(pid)
+        _ = AXUIElementSetMessagingTimeout(appEl, AXReader.messagingTimeout)
+        var found: AXUIElement?
+        _ = FocusTargetPolicy.choose(voiceOverRunning: NSWorkspace.shared.isVoiceOverEnabled) { s in
+            found = Self.resolveWindow(from: s, appElement: appEl, pid: pid).window
+            return found != nil
+        }
+        return found
+    }
+
+    /// The dock's read of one focus source; also records why the VoiceOver source gave no window (the target line shows it).
     private func window(from source: FocusSource, appElement appEl: AXUIElement, pid: pid_t) -> AXUIElement? {
+        let result = Self.resolveWindow(from: source, appElement: appEl, pid: pid)
+        if let failures = result.voiceOverFailures { voiceOverFailures = failures }
+        return result.window
+    }
+
+    /// One focus source's window for app `pid`; `voiceOverFailures` is set only for the VoiceOver source.
+    private static func resolveWindow(from source: FocusSource, appElement appEl: AXUIElement, pid: pid_t)
+        -> (window: AXUIElement?, voiceOverFailures: [FocusAttemptFailure]?) {
         switch source {
         case .voiceover:
             let resolution = FocusedWindowResolver.resolve(frontPID: pid, reader: FocusReader(appElement: appEl))
-            voiceOverFailures = resolution.failures
-            return resolution.window
-        case .keyboard: return Self.element(Self.copy(appEl, kAXFocusedWindowAttribute))
-        case .mouse: return Self.windowUnderPointer(appElement: appEl)
+            return (resolution.window, resolution.failures)
+        case .keyboard: return (Self.element(Self.copy(appEl, kAXFocusedWindowAttribute)), nil)
+        case .mouse: return (Self.windowUnderPointer(appElement: appEl), nil)
         }
     }
 

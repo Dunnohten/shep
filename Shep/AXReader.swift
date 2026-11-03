@@ -18,6 +18,8 @@ struct AXSnapshot {
     var controls: [Control]
     var elements: [String: AXUIElement]
     var truncated: Bool
+    /// The depth cap cut off a subtree (only the label scan treats this as a partial result).
+    var depthCut: Bool = false
     /// Every window of the app that was read, in AX order, with the target marked.
     var windows: [AXWindowSummary] = []
     var nodesVisited: Int = 0
@@ -36,15 +38,54 @@ struct LiveAXNode: AXNodeSource {
     var help: String { AXReader.string(element, kAXHelpAttribute) }
     var valueText: String? { AXReader.copy(element, kAXValueAttribute) as? String }
     var frame: CGRect? { AXReader.frame(of: element) }
+    var identifier: String { AXReader.string(element, kAXIdentifierAttribute) }
+    /// The text of the element that names this one (AXTitleUIElement): its title, else its text value.
+    var titleElementText: String {
+        guard let ref = AXReader.copy(element, kAXTitleUIElementAttribute), CFGetTypeID(ref) == AXUIElementGetTypeID() else { return "" }
+        let titleElement = ref as! AXUIElement
+        let t = AXReader.string(titleElement, kAXTitleAttribute)
+        if !t.isEmpty { return t }
+        return (AXReader.copy(titleElement, kAXValueAttribute) as? String) ?? ""
+    }
     var isEnabled: Bool { AXReader.bool(element, kAXEnabledAttribute, default: true) }
     var actions: [String] {
         var names: CFArray?
         if AXUIElementCopyActionNames(element, &names) == .success, let list = names as? [String] { return list }
         return []
     }
-    func children() -> [LiveAXNode] {
-        guard let kids = AXReader.copy(element, kAXChildrenAttribute) as? [AXUIElement] else { return [] }
-        return kids.map { LiveAXNode(element: $0) }
+    func children() -> [LiveAXNode] { readChildren(limit: Int.max).children }
+    func children(limit: Int) -> [LiveAXNode] { readChildren(limit: limit).children }
+    /// One call that asks Accessibility for at most `limit` children, so a node with a huge list is never fetched whole.
+    /// "No children" and "could not read them" are different answers. An element with no children, or one that says it has no value for
+    /// AXChildren or does not support the attribute (a leaf such as a static text), is a leaf. Any other error (a timeout from a busy app,
+    /// a vanished element, a disabled API, an unexpected reply) means the children are unknown, and the walk is then marked partial.
+    func readChildren(limit: Int) -> AXChildRead<LiveAXNode> {
+        guard limit > 0 else { return AXChildRead(children: []) }
+        var values: CFArray?
+        let err = AXUIElementCopyAttributeValues(element, kAXChildrenAttribute as CFString, 0, min(limit, Int(Int32.max)), &values)
+        switch err {
+        case .success:
+            guard let kids = values as? [AXUIElement] else { return AXChildRead(children: [], failed: true) }
+            return AXChildRead(children: kids.prefix(limit).map { LiveAXNode(element: $0) })
+        case .noValue, .attributeUnsupported:
+            return AXChildRead(children: [])
+        case .illegalArgument:
+            // The indexed read answers "illegal argument" for an element that holds no child list at all (static texts, menu
+            // items, links, check boxes: seen on the fixture window). Ask once more with the plain read, which tells a leaf
+            // (no value, or an empty list) from a real failure.
+            var whole: CFTypeRef?
+            switch AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &whole) {
+            case .success:
+                guard let kids = whole as? [AXUIElement] else { return AXChildRead(children: [], failed: true) }
+                return AXChildRead(children: kids.prefix(limit).map { LiveAXNode(element: $0) })
+            case .noValue, .attributeUnsupported:
+                return AXChildRead(children: [])
+            default:
+                return AXChildRead(children: [], failed: true)
+            }
+        default:
+            return AXChildRead(children: [], failed: true)
+        }
     }
 }
 
@@ -59,11 +100,12 @@ enum AXReader {
 
     /// Reads every window of the app. The target window is chosen by `targetFrame` (within 4 pt), then `targetTitle`, else the
     /// app's main window, else its focused non-modal window, else the first.
-    static func read(pid: pid_t, targetFrame: CGRect? = nil, targetTitle: String? = nil) -> AXSnapshot? {
+    static func read(pid: pid_t, targetFrame: CGRect? = nil, targetTitle: String? = nil, limits: AXWalkLimits = .standard,
+                     preferFocused: Bool = false) -> AXSnapshot? {
         guard AXIsProcessTrusted() else { return nil }
         // The shared deadline starts here, before the app's windows are listed or any window's metadata is read.
         let clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
-        let budget = AXWalkBudget(limits: AXWalkLimits.standard, clock: clock)
+        let budget = AXWalkBudget(limits: limits, clock: clock)
         let app = AXUIElementCreateApplication(pid)
         _ = AXUIElementSetMessagingTimeout(app, messagingTimeout)
         let mainWindow = windowElement(app, kAXMainWindowAttribute)
@@ -95,11 +137,14 @@ enum AXReader {
                 let rect = frame(of: w)
                 if expired() { return nil }
                 let modal = bool(w, "AXModal", default: false)
-                return AXWindowInfo(title: title, subrole: subrole, frame: rect, isMain: isMain, isFocused: isFocused, modalFlag: modal, zOrder: z)
+                if expired() { return nil }
+                let identifier = string(w, kAXIdentifierAttribute)
+                return AXWindowInfo(title: title, subrole: subrole, frame: rect, isMain: isMain, isFocused: isFocused, modalFlag: modal, zOrder: z,
+                                    identifier: identifier)
             }))
         }
         guard let result = AXTreeReader.read(candidates: candidates, targetFrame: targetFrame, targetTitle: targetTitle,
-                                             limits: AXWalkLimits.standard, clock: clock, budget: budget),
+                                             limits: limits, clock: clock, budget: budget, preferFocused: preferFocused),
               let windowFrame = result.windows[result.target].info.frame else { return nil }
 
         let running = NSRunningApplication(processIdentifier: pid)
@@ -107,8 +152,18 @@ enum AXReader {
         for n in result.nodes { live[n.control.pathID] = n.node.element }
         return AXSnapshot(pid: pid, bundleID: running?.bundleIdentifier ?? "", appName: running?.localizedName ?? "this app",
                           windowTitle: result.windows[result.target].info.title, windowFrame: windowFrame, window: elements[result.target],
-                          controls: result.controls, elements: live, truncated: result.truncated, windows: result.windows,
-                          nodesVisited: result.nodesVisited, modalInFront: result.modalInFront)
+                          controls: result.controls, elements: live, truncated: result.truncated, depthCut: result.depthCut,
+                          windows: result.windows, nodesVisited: result.nodesVisited, modalInFront: result.modalInFront)
+    }
+
+    /// The window the dog sits on for `pid` (VoiceOver's focus first, then the keyboard, then the pointer) as a read target.
+    @MainActor static func focusedReadTarget(pid: pid_t) -> WindowReadTarget {
+        let focus = WindowTracker.focusedTargetWindow(pid: pid)
+        return WindowReadTarget.focused(frame: focus.flatMap { frameOf($0) }, title: focus.map { titleOf($0) })
+    }
+
+    static func read(pid: pid_t, target: WindowReadTarget, limits: AXWalkLimits = .standard) -> AXSnapshot? {
+        read(pid: pid, targetFrame: target.frame, targetTitle: target.title, limits: limits, preferFocused: target.preferFocused)
     }
 
     /// The process id of a running app by bundle identifier (first match), for the command-line tools.

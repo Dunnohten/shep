@@ -35,7 +35,14 @@ enum ScreenCapture {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("shep-fix-\(UUID().uuidString).png")
         defer { try? FileManager.default.removeItem(at: file) }
         let status = await run("/usr/sbin/screencapture", ["-x", "-o", "-t", "png", "-l", String(id), file.path], timeout: 15)
-        guard status == 0, let png = try? Data(contentsOf: file), let size = ImageIOPreparer.pixelSize(of: png) else { return .failure(.captureFailed) }
+        guard status == 0 else { return .failure(.captureFailed) }
+        // The file's size and PNG header are checked before anything is read or decoded; a very wide window is scaled down while it is read.
+        let png: Data
+        switch CaptureLimits.boundedPNG(file: file) {
+        case .success(let data): png = data
+        case .failure(let why): print("[shep] screenshot refused: \(why.rawValue)"); return .failure(.captureFailed)
+        }
+        guard let size = ImageIOPreparer.pixelSize(of: png) else { return .failure(.captureFailed) }
         let scale = 2.0   // only a fallback: CaptureGeometry measures the real scale from the image
         return .success(Shot(png: png, geometry: CaptureGeometry(windowFrame: bounds, imageSize: size, scale: scale), windowTitle: title, windowNumber: id))
     }

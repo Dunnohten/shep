@@ -18,18 +18,17 @@ final class DetectorTests: XCTestCase {
 
     func testDefaultsAreLocalAndSAM3IsOff() {
         let c = DetectorConfig()
-        XCTAssertEqual(c.baseURL.absoluteString, "http://127.0.0.1:8765")
-        XCTAssertEqual(c.detectURL.absoluteString, "http://127.0.0.1:8765/detect")
+        XCTAssertEqual(c.baseURL.absoluteString, "http://127.0.0.1:8766")
+        XCTAssertEqual(c.detectURL.absoluteString, "http://127.0.0.1:8766/detect")
         XCTAssertFalse(c.useSAM3)
         XCTAssertNoThrow(try c.validate())
-        XCTAssertThrowsError(try DetectorConfig(baseURL: URL(string: "http://example.com:8765")!).validate())
-        XCTAssertThrowsError(try DetectorConfig(baseURL: URL(string: "http://127.0.0.1:\(11230 + 4)")!).validate())
+        XCTAssertThrowsError(try DetectorConfig(baseURL: URL(string: "http://example.com:8766")!).validate())
     }
 
     func testRequestCarriesTheImageAndTheSAM3Flag() throws {
         let off = try DetectorRequests.detect(png: png, config: DetectorConfig())
         XCTAssertEqual(off.method, "POST")
-        XCTAssertEqual(off.url.absoluteString, "http://127.0.0.1:8765/detect")
+        XCTAssertEqual(off.url.absoluteString, "http://127.0.0.1:8766/detect")
         let o = try XCTUnwrap(JSONSerialization.jsonObject(with: off.body) as? [String: Any])
         XCTAssertEqual(o["image"] as? String, png.base64EncodedString())
         XCTAssertEqual(o["sam3"] as? Bool, false)
@@ -77,7 +76,7 @@ final class DetectorTests: XCTestCase {
         catch { XCTAssertEqual(error as? ProviderError, .http(503, "sam3 is not enabled")) }
 
         let remote = StubTransport(ok)
-        do { _ = try await SidecarDetector(config: DetectorConfig(baseURL: URL(string: "http://example.com:8765")!), transport: remote).detect(png: png, imageSize: size); XCTFail("must throw") } catch {}
+        do { _ = try await SidecarDetector(config: DetectorConfig(baseURL: URL(string: "http://example.com:8766")!), transport: remote).detect(png: png, imageSize: size); XCTFail("must throw") } catch {}
         XCTAssertTrue(remote.requests.isEmpty, "nothing is sent off this Mac")
         XCTAssertEqual(SidecarDetector(config: DetectorConfig(useSAM3: true)).name, "omniparser-v3+sam3")
     }

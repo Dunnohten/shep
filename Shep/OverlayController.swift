@@ -33,6 +33,8 @@ final class OverlayController {
     /// What push-to-talk has heard so far; shown in the pill as soon as the dock is up.
     private var transcript = ""
     private var pendingChoice: CheckedContinuation<String?, Never>?
+    /// `askText`: the next thing typed in the ask field answers this question instead of being sent as a request.
+    private var pendingText: CheckedContinuation<String?, Never>?
     /// The app that was in front when an approval card took key status; it gets focus back when the card closes.
     private var previousFront: NSRunningApplication?
     private var approvalKeyed = false
@@ -93,10 +95,19 @@ final class OverlayController {
         overlay.container.onPress = { [weak self] in self?.dogClicked() }
         card.onChoice = { [weak self] id in self?.resolveChoice(id); self?.updateClickThrough() }
         card.onSubmit = { [weak self] text in
-            self?.lineAfterPill = nil   // a new request: the last result is not said over it
-            self?.closePill()
-            self?.onSubmit?(text)
-            self?.updateClickThrough()
+            guard let self else { return }
+            if let waiting = self.pendingText {
+                // The field was answering one question (`askText`): the text goes to that caller, not out as a request.
+                self.pendingText = nil
+                self.card.setAskPrompt(nil)
+                self.closePill()
+                waiting.resume(returning: text)
+            } else {
+                self.lineAfterPill = nil   // a new request: the last result is not said over it
+                self.closePill()
+                self.onSubmit?(text)
+            }
+            self.updateClickThrough()
         }
         card.onCancel = { [weak self] in
             guard let self else { return }
@@ -431,7 +442,28 @@ final class OverlayController {
         card.show(.askField, layout: currentLayout)   // takes key status and puts the cursor in the field
     }
 
+    /// Asks one question in the ask field and returns what was typed, or nil when it was dismissed (Escape, or the card went away).
+    /// The text goes only to the caller: it is not submitted as a request.
+    func askText(prompt: String) async -> String? {
+        resolveChoice(nil, restoreKey: false)
+        resolveText(nil)
+        announce(prompt)
+        return await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
+            pendingText = cont
+            openPill()
+            card.setAskPrompt(prompt)
+        }
+    }
+
+    private func resolveText(_ text: String?) {
+        guard let c = pendingText else { return }
+        pendingText = nil
+        card.setAskPrompt(nil)
+        c.resume(returning: text)
+    }
+
     private func closePill() {
+        resolveText(nil)
         guard pillOpen else { return }
         pillOpen = false
         onPillChanged?(false)

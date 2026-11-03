@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let permissions = PermissionModel()
     private var overlay: OverlayController?
     private var fixScreen: FixScreenCoordinator?
+    private var labelRepair: LabelRepairCoordinator?
+    /// The labels Shep added after the person approved them (label-overlay.json under Application Support/Shep).
+    private var labelStore: LabelOverlayStore?
     private var fixTask: Task<Void, Never>?
     private var coordinator: ShepCoordinator?
     private let hotKeys = HotKeyCenter()
@@ -93,6 +96,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        if let target = options.fixScreenScanTarget {
+            // Headless, read-only: print the label scan's flags for the app's window, exit. No model call and no writes.
+            setvbuf(stdout, nil, _IOLBF, 0)
+            let environment = ProcessInfo.processInfo.environment
+            let title = options.toolTitle, frame = options.toolFrame
+            Task {
+                let code = AXCommandLine.fixScreenScan(target: target, title: title, frame: frame, environment: environment)
+                fflush(stdout)
+                exit(code)
+            }
+            return
+        }
         if let target = options.pressDemoTarget {
             // Headless: propose AXPress on one control and stop at the approval card, unless the operator typed --approve.
             setvbuf(stdout, nil, _IOLBF, 0)
@@ -155,6 +170,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.settings.environment() ?? ProcessInfo.processInfo.environment
         })
         fixScreen = fix
+        let store = LabelOverlayStore(fileURL: LabelOverlayStore.defaultFileURL(home: NSHomeDirectory()))
+        labelStore = store
+        fix.labelStore = store
+        labelRepair = LabelRepairCoordinator(overlay: controller, store: store, environment: { [weak self] in
+            self?.settings.environment() ?? ProcessInfo.processInfo.environment
+        })
         let shep = ShepCoordinator(overlay: controller, enabled: lifecycleEnabled, verbose: verbose, theme: currentTheme,
                                    statusItemFrame: { [weak self] in self?.statusItem?.button?.window?.frame })
         coordinator = shep
@@ -420,9 +441,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func runFixScreen(request: String?, completion: (() -> Void)? = nil) {
         guard let fix = fixScreen else { completion?(); return }
         let shep = coordinator
+        // "fix this screen" / "label this window" and "clear labels for this app" are label requests; everything else (and every live
+        // run, which reports through the live status channel) takes the existing path unchanged.
+        let intent = options.liveRequest == nil ? ScreenIntentRouter.route(request) : ScreenIntent.other
+        let labels = labelRepair
         fixTask = Task { [weak self] in
             shep?.taskStarted()
-            await fix.run(request: request)
+            switch intent {
+            case .fixScreen: await labels?.fixScreen()
+            case .clearLabels: await labels?.clearLabels()
+            case .other: await fix.run(request: request)
+            }
             shep?.taskDone()
             self?.fixTask = nil
             self?.refreshWakeWord()

@@ -1,7 +1,8 @@
 #!/bin/bash
 # Source rules from the brief, checked by grep. Run by scripts/test.sh.
 #  1. No AppleScript / osascript / NSAppleScript anywhere in Swift sources or scripts.
-#  2. The app (Shep/) and the scripts never name another local model server.
+#  2. No tracked or new file and no commit message holds a banned model token (compared by SHA-256 hash, no literal in the repo).
+#     The runtime allowlist (Muse Glimmer locally, Muse Spark at api.meta.ai) is in ShepCore/Sources/ModelAllowlist.swift.
 #  3. Backticked commit hashes in README.md and docs/*.md resolve on main.
 #  5. No network session outside MetaClient.swift.
 #  6. No region video capture (screencapture -v / -R) in scripts/ except the old backdrop-rectangle scripts.
@@ -15,9 +16,23 @@ if grep -rniE "$a|$b|$c" --include='*.swift' --include='*.sh' --include='*.yml' 
      | grep -v 'scripts/check-rules.sh'; then
   echo "FAIL: scripting-bridge automation found (see lines above)" >&2; fail=1
 fi
-p="11""234"
-if grep -rnE "$p" --include='*.swift' --include='*.sh' Shep scripts | grep -v 'scripts/check-rules.sh'; then
-  echo "FAIL: another local model is referenced (see lines above)" >&2; fail=1
+# 2. The banned model tokens are stored only as SHA-256 hashes (scripts/banned-token-hashes.txt). Every tracked or new file, and the
+#    branch's commit messages, are tokenized and each token is hashed and compared; no file holds the token itself.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "FAIL: python3 is needed for the banned-token check" >&2; fail=1
+else
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    files="$(git ls-files -co --exclude-standard)"
+  else
+    files="$(find Shep ShepCore scripts tools docs -type f 2>/dev/null; ls README.md LESSONS.md 2>/dev/null)"
+  fi
+  # shellcheck disable=SC2086
+  if echo "$files" | tr '\n' '\0' | xargs -0 python3 -I scripts/check-banned-tokens.py scripts/banned-token-hashes.txt; then :; else
+    echo "FAIL: a banned model token is in the files above (only its hash is stored, in scripts/banned-token-hashes.txt)" >&2; fail=1
+  fi
+  if git rev-parse --git-dir >/dev/null 2>&1 && ! git log --format=%B | python3 -I scripts/check-banned-tokens.py scripts/banned-token-hashes.txt - >/dev/null; then
+    echo "FAIL: a banned model token is in a commit message" >&2; fail=1
+  fi
 fi
 # 5. One HTTP session only: URLSessionMetaTransport (MetaClient.swift) owns the redirect-refusing session. No other app or
 #    library source creates a URLSession, uses URLSession.shared, or opens a URL connection.

@@ -148,4 +148,72 @@ final class SourceRulesTests: XCTestCase {
             XCTAssertFalse(text.contains("11" + "234"), url.lastPathComponent)
         }
     }
+
+    /// Every tracked or new file under the repo (not build output, not .git) holds no banned token. The tokens are stored only as hashes in
+    /// scripts/banned-token-hashes.txt; this test and scripts/check-banned-tokens.py use the same tokenizer.
+    func testNoFileInTheTreeHoldsABannedToken() throws {
+        let root = repoRoot()
+        let hashFile = root.appendingPathComponent("scripts/banned-token-hashes.txt")
+        try XCTSkipIf(!FileManager.default.fileExists(atPath: hashFile.path), "source tree not reachable from the test bundle")
+        let hashes = BannedTokenScan.hashes(inListing: try String(contentsOf: hashFile, encoding: .utf8))
+        XCTAssertFalse(hashes.isEmpty, "the hash list is empty")
+        var checked = 0
+        for folder in ["Shep", "ShepCore", "scripts", "tools", "docs", "Config", "Resources"] {
+            guard let walker = FileManager.default.enumerator(at: root.appendingPathComponent(folder), includingPropertiesForKeys: nil) else { continue }
+            for case let url as URL in walker where ["swift", "sh", "py", "md", "yml", "json", "txt", "html", "ts", "js"].contains(url.pathExtension) {
+                guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+                checked += 1
+                XCTAssertFalse(BannedTokenScan.contains(text, hashes: hashes), url.lastPathComponent)
+            }
+        }
+        for name in ["README.md", "LESSONS.md", "NOTICE", "project.yml"] {
+            if let text = try? String(contentsOf: root.appendingPathComponent(name), encoding: .utf8) {
+                checked += 1
+                XCTAssertFalse(BannedTokenScan.contains(text, hashes: hashes), name)
+            }
+        }
+        try XCTSkipIf(checked == 0, "source tree not reachable from the test bundle")
+    }
+
+    /// The checker itself, with a harmless token whose hash is in a test-only list: a file holding it is flagged, a file without it is not.
+    /// The token is found as a word, inside punctuation, in a different case and as a part of a camel-case compound, but not inside a
+    /// longer word; a banned number is found only as a whole digit run.
+    func testTheCheckerFlagsAFileHoldingATokenFromItsList() throws {
+        let harmless = BannedTokenScan.hashes(inListing: "# test-only list\n11 0184a519a036e2f74423335947ea4a0e009899c6e7d2525f85073f4a26dbbc20\n")
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("shep-banned-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dirty = dir.appendingPathComponent("dirty.txt")
+        let clean = dir.appendingPathComponent("clean.txt")
+        try "some text, then gigglesnort-3 and more".write(to: dirty, atomically: true, encoding: .utf8)
+        try "nothing to see here, giggle and snort apart".write(to: clean, atomically: true, encoding: .utf8)
+        XCTAssertTrue(BannedTokenScan.contains(try String(contentsOf: dirty, encoding: .utf8), hashes: harmless), "a file holding the token is flagged")
+        XCTAssertFalse(BannedTokenScan.contains(try String(contentsOf: clean, encoding: .utf8), hashes: harmless), "a file without it is not")
+        XCTAssertTrue(BannedTokenScan.contains("(GIGGLESNORT)", hashes: harmless))
+        XCTAssertTrue(BannedTokenScan.contains("model GiggleSnort", hashes: harmless))
+        XCTAssertFalse(BannedTokenScan.contains("gigglesnorts and xgigglesnort", hashes: harmless), "a longer word is a different word")
+        let digits = BannedTokenScan.hashes(inListing: "5 \(BannedTokenScan.sha256Hex("90210"))")
+        XCTAssertTrue(BannedTokenScan.contains("port 90210/v1", hashes: digits))
+        XCTAssertFalse(BannedTokenScan.contains("port 902101 and 190210", hashes: digits), "a longer digit run is a different number")
+    }
+
+    /// The real list holds the banned tokens as hashes only: two lines, nothing else that could be read back as a word.
+    func testTheHashListHoldsHexOnly() throws {
+        let text = try String(contentsOf: repoRoot().appendingPathComponent("scripts/banned-token-hashes.txt"), encoding: .utf8)
+        let entries = text.split(whereSeparator: { $0.isNewline }).filter { !$0.hasPrefix("#") }
+        XCTAssertFalse(entries.isEmpty)
+        for line in entries {
+            let parts = line.split(separator: " ")
+            XCTAssertEqual(parts.count, 2, String(line))
+            XCTAssertEqual(parts.last?.count, 64)
+            XCTAssertTrue(parts.last?.allSatisfy { $0.isHexDigit } ?? false)
+        }
+    }
+
+    func testTheLabelModelIsAMetaModel() throws {
+        XCTAssertEqual(LabelModelConfig.glimmer().baseURL.host, "127.0.0.1")
+        XCTAssertTrue(LabelModelConfig.glimmer().model.contains("Glimmer"))
+        XCTAssertEqual(LabelModelConfig.spark().baseURL.host, "api.meta.ai")
+        XCTAssertTrue(LabelModelConfig.spark().model.hasPrefix("muse-spark"))
+    }
 }

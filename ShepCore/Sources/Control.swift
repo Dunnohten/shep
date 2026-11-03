@@ -19,8 +19,17 @@ public struct Control: Equatable, Sendable {
     public var window: String
     /// Subrole of the window this control was read from (AXDialog, AXSheet, AXStandardWindow...); empty when unknown.
     public var windowSubrole: String = ""
+    /// AXIdentifier of the window this control was read from; "" when the app sets none.
+    public var windowIdentifier: String = ""
     /// False for a control read from a dialog or sheet in front of the target window. Its value never goes into a model prompt.
     public var inTargetWindow: Bool = true
+    /// AXIdentifier, read only for the controls the label scan looks at (buttons, checkboxes, links, pop-ups). Never shown to the person.
+    public var identifier: String = ""
+    /// The text of the control's AXTitleUIElement (the label element that names it), read for the same controls. Empty when none.
+    public var titleElementText: String = ""
+    /// A label Shep added after the person approved it (the label overlay). Used as the name only when the app gave the control no
+    /// real name of its own; a control the app names is never renamed by it.
+    public var overlayLabel: String = ""
     /// True when found on the screenshot, not in the app's Accessibility tree. Such a control can only be clicked by
     /// coordinates, and that always waits for an explicit approval.
     public var fromVision: Bool
@@ -35,7 +44,7 @@ public struct Control: Equatable, Sendable {
 
     /// Where `label` comes from.
     public enum LabelSource: String, Equatable, Sendable {
-        case title, description, value, tooltip, none
+        case title, description, value, tooltip, overlay, none
     }
 
     private static func clean(_ s: String) -> String {
@@ -45,6 +54,15 @@ public struct Control: Equatable, Sendable {
 
     /// Title, else description, else (plain text only) its value, else the tooltip (AXHelp), lowest priority.
     private var resolvedLabel: (text: String, source: LabelSource) {
+        let named = namedLabel
+        if !overlayLabel.isEmpty, named.source == .none || named.source == .tooltip || LabelText.isGeneric(named.text) {
+            let o = Control.clean(overlayLabel)
+            if !o.isEmpty { return (o, .overlay) }
+        }
+        return named
+    }
+
+    private var namedLabel: (text: String, source: LabelSource) {
         let t = Control.clean(title)
         if !t.isEmpty { return (t, .title) }
         let d = Control.clean(description)
@@ -97,6 +115,7 @@ public struct Control: Equatable, Sendable {
         if !isSecure, inTargetWindow, let v = value, !v.isEmpty { s += " value=\"\(v.prefix(40))\"" }
         if !enabled { s += " (disabled)" }
         if labelSource == .tooltip { s += " (named by its tooltip)" }
+        if labelSource == .overlay { s += " (label added by Shep)" }
         if fromVision { s += " (found on screen)" }
         return s
     }

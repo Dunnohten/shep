@@ -9,7 +9,7 @@
 # The report (controls, proposals, notes, timings) is printed AND written to <evidence dir>/e2e-<time>.txt, beside the
 # capture. The evidence dir is ~/shep-evidence (SHEP_EVIDENCE_DIR), never the repo.
 # Glimmer is reused, never started: the server must already answer at SHEP_GLIMMER_URL (default http://127.0.0.1:8080/v1),
-# and the detector sidecar at SHEP_DETECTOR_URL (default http://127.0.0.1:8765, scripts/detector-server.py).
+# and the detector sidecar at SHEP_DETECTOR_URL (default http://127.0.0.1:8766, scripts/detector-server.py).
 # With --window the owner's pid is exported as SHEP_AX_PID, so the app's own controls (Accessibility) are read for that window
 # and merged with the vision boxes; the terminal needs Accessibility access for that. If the pid cannot be resolved the script
 # stops (exit 2) before capturing: a window capture never goes on as an unattested file. A bare PNG reads no Accessibility.
@@ -63,7 +63,7 @@ done
 app="${SHEP_APP:-build/Build/Products/Debug/Shep.app}"
 bin="$app/Contents/MacOS/Shep"
 url="${SHEP_GLIMMER_URL:-http://127.0.0.1:8080/v1}"
-detector="${SHEP_DETECTOR_URL:-http://127.0.0.1:8765}"
+detector="${SHEP_DETECTOR_URL:-http://127.0.0.1:8766}"
 
 # Everything that can refuse runs BEFORE anything is written: the window is resolved, the owner's bundle id is looked up for that
 # exact window and checked against the shared never-capture list, the app and the helper servers are checked, and only then does

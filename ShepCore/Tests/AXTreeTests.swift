@@ -245,8 +245,9 @@ final class AXTreeReadTests: XCTestCase {
         final class Ticker { var calls = 0; func next() -> TimeInterval { defer { calls += 1 }; return Double(calls) * 0.5 } }
         let ticker = Ticker()
         let r = read(SampleTorrentApp.windowsWithAlert(), clock: { ticker.next() })
-        // The budget made its deadline at t=0 (2.0 s); checks at 0.5, 1.0, 1.5, 2.0 pass (not past it), 2.5 stops.
-        XCTAssertEqual(r.nodesVisited, 4)
+        // The budget made its deadline at t=0 (2.0 s). Each node now looks at the clock twice: before it is read and again before its
+        // children are fetched. Checks at 0.5, 1.0, 1.5, 2.0 pass (not past it), 2.5 stops: two nodes.
+        XCTAssertEqual(r.nodesVisited, 2)
         XCTAssertTrue(r.truncated)
     }
 

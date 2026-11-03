@@ -5,7 +5,7 @@ final class LoopbackURLTests: XCTestCase {
     func url(_ s: String) -> URL { URL(string: s)! }
 
     func testLoopbackHostsAreAccepted() {
-        for s in ["http://127.0.0.1:8080/v1", "http://localhost:8765", "http://[::1]:8080/v1", "https://127.0.0.1/x", "http://LOCALHOST:9/"] {
+        for s in ["http://127.0.0.1:8080/v1", "http://localhost:8766", "http://[::1]:8080/v1", "https://127.0.0.1/x", "http://LOCALHOST:9/"] {
             XCTAssertTrue(LoopbackURL.isLoopback(url(s)), s)
         }
     }
@@ -21,10 +21,10 @@ final class LoopbackURLTests: XCTestCase {
     func testEveryLocalConfigPinsLoopback() {
         XCTAssertThrowsError(try GlimmerConfig(baseURL: url("http://example.com:8080/v1")).validate())
         XCTAssertThrowsError(try GlimmerConfig(baseURL: url("http://127.0.0.1@example.com:8080/v1")).validate())
-        XCTAssertThrowsError(try DetectorConfig(baseURL: url("http://10.0.0.2:8765")).validate())
-        XCTAssertThrowsError(try DetectorConfig(baseURL: url("ftp://127.0.0.1:8765")).validate())
+        XCTAssertThrowsError(try DetectorConfig(baseURL: url("http://10.0.0.2:8766")).validate())
+        XCTAssertThrowsError(try DetectorConfig(baseURL: url("ftp://127.0.0.1:8766")).validate())
         XCTAssertNoThrow(try GlimmerConfig(baseURL: url("http://[::1]:8080/v1")).validate())
-        XCTAssertNoThrow(try DetectorConfig(baseURL: url("http://localhost:8765")).validate())
+        XCTAssertNoThrow(try DetectorConfig(baseURL: url("http://localhost:8766")).validate())
     }
 
     func testSettingsFieldRejectsARemoteAddress() {

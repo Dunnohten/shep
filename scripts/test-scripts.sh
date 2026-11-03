@@ -1088,6 +1088,33 @@ check "NOTICE carries Vite's copyright line" grep -qxF "Copyright (c) 2019-prese
 check "NOTICE carries the permission sentence for Vite" bash -c 'awk "/^Vite: MIT License/{f=1} f" NOTICE | grep -qF "Permission is hereby granted, free of charge, to any person obtaining a copy"'
 check "NOTICE carries the warranty disclaimer for Vite" bash -c 'awk "/^Vite: MIT License/{f=1} f" NOTICE | grep -qF "THE SOFTWARE IS PROVIDED \"AS IS\""'
 
+# ---------------------------------------------------------------- scripts/fixscreen-fixture.sh (the label-repair test window)
+check "scripts/fixscreen-fixture.sh exists" test -f scripts/fixscreen-fixture.sh
+check "scripts/fixscreen-fixture.sh parses" bash -n scripts/fixscreen-fixture.sh
+check "the fixture source exists" test -f tools/fixscreen-fixture/FixtureApp.swift
+bash scripts/fixscreen-fixture.sh >/dev/null 2>&1; eq "the fixture script with no mode exits 2" 2 "$?"
+bash scripts/fixscreen-fixture.sh nonsense >/dev/null 2>&1; eq "the fixture script with an unknown mode exits 2" 2 "$?"
+check "the fixture script never writes into the tracked tree by default" grep -q 'build/fixscreen-fixture' scripts/fixscreen-fixture.sh
+eq "the fixture has at least 10 unlabeled controls" 1 "$([ "$(grep -c '// unlabeled:' tools/fixscreen-fixture/FixtureApp.swift)" -ge 10 ] && echo 1 || echo 0)"
+eq "the fixture has at least 10 labeled controls" 1 "$([ "$(grep -c '// labeled:' tools/fixscreen-fixture/FixtureApp.swift)" -ge 10 ] && echo 1 || echo 0)"
+eq "the scan mode does not call a model" 0 "$(grep -c 'chat/completions' scripts/fixscreen-fixture.sh)"
+eq "the three unlabeled image buttons use images drawn in code (a system symbol names itself)" 3 "$(grep -c 'unnamedImage: true' tools/fixscreen-fixture/FixtureApp.swift)"
+# The banned-token checker: it takes a list of SHA-256 hashes and flags a file that holds a token with a listed hash. Tested with a harmless
+# token whose hash is made here; the real list (scripts/banned-token-hashes.txt) holds hashes only.
+eq "the repo rule uses the hash checker" 2 "$(grep -c 'check-banned-tokens.py' scripts/check-rules.sh)"
+eq "the detector server keeps no list of ports to avoid" 0 "$(grep -c 'another local' scripts/detector-server.py)"
+tok_dir="$tmp/banned-tokens"; mkdir -p "$tok_dir"
+tok_hash="$(printf '%s' gigglesnort | shasum -a 256 | cut -d' ' -f1)"
+printf '# test list\n11 %s\n' "$tok_hash" > "$tok_dir/list.txt"
+printf 'a line with GiggleSnort-3 in it\n' > "$tok_dir/dirty.txt"
+printf 'giggle and snort, apart; gigglesnorts is another word\n' > "$tok_dir/clean.txt"
+python3 -I scripts/check-banned-tokens.py "$tok_dir/list.txt" "$tok_dir/clean.txt" >/dev/null; eq "the checker passes a clean file" 0 "$?"
+hit_out="$(python3 -I scripts/check-banned-tokens.py "$tok_dir/list.txt" "$tok_dir/clean.txt" "$tok_dir/dirty.txt")"; hit_rc=$?
+eq "the checker fails a file with a listed token" 1 "$hit_rc"
+eq "the checker names the file, not the token" "$tok_dir/dirty.txt" "$hit_out"
+printf 'x gigglesnort y\n' | python3 -I scripts/check-banned-tokens.py "$tok_dir/list.txt" - >/dev/null; eq "the checker reads standard input (commit messages)" 1 "$?"
+eq "the real list holds only hashes" 0 "$(grep -vE '^(#|[0-9]+ [0-9a-f]{64}$|$)' scripts/banned-token-hashes.txt | wc -l | tr -d ' ')"
+
 if [ "${SHEP_TEST_KEEP:-}" = 1 ]; then kept="; temp files kept in $tmp (SHEP_TEST_KEEP=1)"; else kept="; the temp directory is removed at exit"; fi
 echo "scripts under test run from $repo$kept"
 echo "test-scripts: $pass passed, $failed failed"

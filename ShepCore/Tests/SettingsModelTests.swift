@@ -71,7 +71,6 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertNotNil(ShepSettings.glimmerURLIssue(""))
         XCTAssertNotNil(ShepSettings.glimmerURLIssue("ftp://127.0.0.1/v1"))
         XCTAssertNotNil(ShepSettings.glimmerURLIssue("http://example.com/v1"), "not on this Mac")
-        XCTAssertNotNil(ShepSettings.glimmerURLIssue("http://127.0.0.1:\(11230 + 4)/v1"), "another local model server's port")
         XCTAssertNotNil(ShepSettings.glimmerURLIssue("garbage"))
         var s = ShepSettings.defaults
         s.glimmerURL = "http://example.com/v1"

@@ -46,12 +46,24 @@ The order is `FocusTargetPolicy` in ShepCore and is unit-tested; the app logs wh
 - Shep hides its own windows from screen sharing and recordings by default (**Hide Shep from Screen Sharing** in the menu).
 - There is no scripting-bridge automation in the code; `scripts/check-rules.sh` and a unit test enforce that.
 
+## Fix this screen: missing labels
+
+Say or type **"fix this screen"** (or "label this screen", "find unlabeled buttons"). Shep walks the front window's Accessibility tree and flags buttons, checkboxes, links and similar controls that have no real name (no title or description, or only a role word, a file name, a symbol or a machine identifier). For the flagged controls it asks a **Meta Muse model** for short labels, in one batched, schema-constrained request:
+
+- **Default, offline: Muse Glimmer** on this Mac, the same local server the naming uses (`SHEP_GLIMMER_URL`, default `http://127.0.0.1:8080/v1`). The transport is loopback-only, so nothing leaves the Mac.
+- **Optional, cloud: Muse Spark** (`muse-spark-1.3` at `https://api.meta.ai/v1`), only with `SHEP_LABEL_PROVIDER=meta` **and** a `MODEL_API_KEY` in the environment (never stored or logged). Without a key Shep uses Glimmer.
+
+Both are an allowlist (a `muse-glimmer` model id on a loopback address, or a `muse-spark-` model id at `api.meta.ai`); anything else is refused. Shep says where the words go before it sends them, and sends only each control's role, nearby text, help, identifier and position as JSON (cropped images only with `SHEP_LABEL_IMAGES=1`).
+
+Nothing is saved until you approve: one card lists every proposed label with **Accept all**, **Edit one...**, **Reject one...** and **Cancel**. Approved labels live in `~/Library/Application Support/Shep/label-overlay.json`, keyed by app, window kind and a fingerprint of the control, and are shown only when exactly one live control matches; a vanished label is better than a wrong one. A control that cannot be told apart from its neighbours, or a window too large to read fully, is never labelled. **"Clear labels for this app"** removes them. The full rules are in [docs/DEVELOPER.md](docs/DEVELOPER.md#fix-this-screen-labels).
+
 ## Models
 
 | Component | Role | Licence | Where it runs |
 |---|---|---|---|
 | **Muse Glimmer 30B** by Meta ([model card](https://huggingface.co/meta-models/Muse-Glimmer-30B)) | Names screenshot-only controls and picks the target of a request | Apache 2.0 | Your Mac, behind any OpenAI-compatible server. Tested with the 4-bit MLX conversion served by `mlx_vlm.server` (`scripts/glimmer-server.sh`), default `http://127.0.0.1:8080/v1` |
-| **OmniParser v3** `icon_detect` by Microsoft | Finds control boxes on the screenshot | MIT (the weights' own licence file applies) | Local Python sidecar, `127.0.0.1:8765` (`scripts/detector-server.py`) |
+| **Muse Spark** by Meta (`muse-spark-1.3`, Meta Model API) | Optional cloud labels for fix this screen, and an optional cloud provider | Meta's API terms | `api.meta.ai`, only with `MODEL_API_KEY` set and opted in; untested here |
+| **OmniParser v3** `icon_detect` by Microsoft | Finds control boxes on the screenshot | MIT (the weights' own licence file applies) | Local Python sidecar, `127.0.0.1:8766` (`scripts/detector-server.py`) |
 | macOS Accessibility | The app's own controls, and the presses | — | The app |
 | macOS Speech (`SFSpeechRecognizer`) | "Hey Shep" (always on-device) and push to talk (on-device whenever the Mac supports it) | — | The app |
 
@@ -108,7 +120,7 @@ build/Build/Products/Debug/Shep.app/Contents/MacOS/Shep --ui-snapshot <dir>   # 
 ## Limitations and not yet
 
 - **SAM 3 has not been run inside Shep.** It is wired in as an optional second detector (`--sam3` on the sidecar plus `SHEP_SAM3=1`, with your own Hugging Face token for the gated weights) and is off by default. SAM 3 is under Meta's SAM License, which is not an open-source licence.
-- **The cloud provider has not been run.** A Muse Spark + SAM 3.1 provider through the Meta Model API exists behind `SHEP_PROVIDER=meta`, a `MODEL_API_KEY`, and the menu switch **Allow Screenshots to Meta Cloud**. It is untested and not used in the demo.
+- **The cloud provider has not been run.** A Muse Spark + SAM 3.1 provider through the Meta Model API exists behind `SHEP_PROVIDER=meta`, a `MODEL_API_KEY`, and the menu switch **Allow Screenshots to Meta Cloud**. Cloud labels for fix this screen (`SHEP_LABEL_PROVIDER=meta`) use the same key. Both are untested and not used in the demo.
 - **"Fix This Screen" with no request, on a window where nothing is wrong, offers nothing.** Shep says what it saw rather than guess.
 - **A screenshot-only pick on an empty spot can still end in "I can't identify what is under that spot"** when no listed control matches the request words, so there is nothing to fall back to.
 - **The rescue for a missed pick is narrow on purpose.** If the model picks nothing, Shep offers a control only when exactly one control clearly matches the request words.
@@ -116,6 +128,7 @@ build/Build/Products/Debug/Shep.app/Contents/MacOS/Shep --ui-snapshot <dir>   # 
 - **The "Hey Shep" matcher is English-only** (hey, hay, hei, eh or a, followed by shep or a close spelling) and needs on-device recognition for your language.
 - **The OmniParser weights' download location is not recorded** (see [docs/detector.md](docs/detector.md)); read the licence file that ships with whichever copy you use.
 - **Tested on one Mac**, with three displays, including displays at negative coordinates. It has not been tested by VoiceOver users yet. Not signed or packaged.
+- **Status (November 2, 2026):** a release candidate for the Meta hackathon. Requests and fix this screen were run end to end on a test window with VoiceOver off and on, using Muse Glimmer locally; the detector ran in its test mode for that run, not with the OmniParser weights.
 - Roadmap: answering questions about the screen (not only pressing controls), packaging and signing, and testing with VoiceOver users.
 
 ## Layout

@@ -43,6 +43,7 @@ public struct ProposedAction: Equatable, Sendable {
         var s = "\(kind.verb) the \(control.kind) \"\(control.label)\""
         if case .setValue(let t) = kind { s += " with \"\(t.prefix(60))\"" }
         if control.labelSource == .tooltip { s += " (named by its tooltip)" }
+        if control.labelSource == .overlay { s += " (label added by Shep)" }
         if control.fromVision { s += " (found on screen)" }
         return s
     }

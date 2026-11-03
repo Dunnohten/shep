@@ -46,7 +46,7 @@ public struct DetectorConfig: Equatable, Sendable {
     public var useSAM3: Bool
     public var timeout: TimeInterval
 
-    public static let defaultBaseURL = "http://127.0.0.1:8765"
+    public static let defaultBaseURL = "http://127.0.0.1:8766"
 
     public init(baseURL: URL = URL(string: DetectorConfig.defaultBaseURL)!, useSAM3: Bool = false, timeout: TimeInterval = 240) {
         self.baseURL = baseURL; self.useSAM3 = useSAM3; self.timeout = timeout
@@ -56,7 +56,7 @@ public struct DetectorConfig: Equatable, Sendable {
 
     /// Local only, and never the port of another local model server.
     public func validate() throws {
-        if baseURL.port == 11230 + 4 { throw ProviderError.refusedConfig("That port belongs to a different local model server, not the detector.") }
+        if LoopbackURL.isOtherModelServer(baseURL) { throw ProviderError.refusedConfig("That port belongs to a different local model server, not the detector.") }
         guard LoopbackURL.isLoopback(baseURL) else {
             throw ProviderError.refusedConfig("The detector must run on this Mac (127.0.0.1).")
         }

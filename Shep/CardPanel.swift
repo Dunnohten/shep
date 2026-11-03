@@ -80,6 +80,17 @@ final class CardView: NSView, NSTextFieldDelegate {
     private let scroll = NSScrollView()
     private let icon = NSImageView()
     private let field = NSTextField()
+    static let askHint = "Ask Shep"
+    static let askHelp = "Type what you want done in the window in front, then press Return. Escape closes it."
+    /// The question the ask field is answering (`setFieldPrompt`), nil for an ordinary request.
+    private var fieldPrompt: String?
+
+    /// A hint in the empty ask field while it answers one question; nil puts the usual hint and help back.
+    func setFieldPrompt(_ text: String?) {
+        fieldPrompt = text
+        field.placeholderString = text ?? Self.askHint
+        field.setAccessibilityHelp(text ?? Self.askHelp)
+    }
     private var buttons: [(id: String, view: NSButton)] = []
     private var model: CardModel?
     /// The kind of card last laid out; nil until the first one.
@@ -108,7 +119,7 @@ final class CardView: NSView, NSTextFieldDelegate {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
-        field.placeholderString = "Ask Shep"
+        field.placeholderString = Self.askHint
         field.font = Self.font
         field.bezelStyle = .roundedBezel
         field.isBezeled = true
@@ -183,7 +194,8 @@ final class CardView: NSView, NSTextFieldDelegate {
                 textWidth -= 22
             }
             let natural = ceil(label.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: textWidth, height: 10_000)).height ?? 16)
-            let buttonsHeight: CGFloat = model.buttons.isEmpty ? 0 : Self.rowGap + Self.buttonHeight
+            let rows = Self.buttonRows(makeButtons(model), maxWidth: inner)
+            let buttonsHeight: CGFloat = rows.isEmpty ? 0 : Self.rowGap + Self.buttonRowsHeight(rows.count)
             let room = max(maxHeight - 2 * pad - buttonsHeight, 18)
             let textHeight = min(natural, room)
             if natural > room {
@@ -202,16 +214,16 @@ final class CardView: NSView, NSTextFieldDelegate {
                 textElement = label
             }
             y += textHeight
-            if !model.buttons.isEmpty {
+            if !rows.isEmpty {
                 y += Self.rowGap
-                layoutButtons(model, rightEdge: width - pad, y: y)
-                y += Self.buttonHeight
+                layoutButtons(rows, model: model, rightEdge: width - pad, y: y)
+                y += Self.buttonRowsHeight(rows.count)
             }
         case .askField:
             if !keepTyping { field.stringValue = "" }
             field.frame = NSRect(x: pad, y: y, width: inner, height: Self.fieldHeight)
             field.setAccessibilityLabel("Ask Shep")
-            field.setAccessibilityHelp("Type what you want done in the window in front, then press Return. Escape closes it.")
+            field.setAccessibilityHelp(fieldPrompt ?? Self.askHelp)
             addSubview(field)
             initialFocus = field
             y += Self.fieldHeight
@@ -246,10 +258,16 @@ final class CardView: NSView, NSTextFieldDelegate {
         return ordered + rest
     }
 
-    /// The buttons sit at the trailing edge in the order the card gives them. None is the default button: Return does nothing.
-    private func layoutButtons(_ model: CardModel, rightEdge: CGFloat, y: CGFloat) {
-        var views: [(CardButton, NSButton)] = []
-        for b in model.buttons {
+    /// Gap between two rows of buttons when they do not fit on one row.
+    static let buttonRowGap: CGFloat = 6
+
+    static func buttonRowsHeight(_ rows: Int) -> CGFloat {
+        rows <= 0 ? 0 : CGFloat(rows) * buttonHeight + CGFloat(rows - 1) * buttonRowGap
+    }
+
+    /// One NSButton per card button, sized to its title, in the order the card gives them.
+    private func makeButtons(_ model: CardModel) -> [(CardButton, NSButton)] {
+        model.buttons.map { b in
             let spec = b.spec
             let button = NSButton(title: spec.title, target: self, action: #selector(buttonPressed(_:)))
             button.bezelStyle = .rounded
@@ -258,20 +276,55 @@ final class CardView: NSView, NSTextFieldDelegate {
             button.setAccessibilityRole(.button)
             button.identifier = NSUserInterfaceItemIdentifier(spec.id)
             button.sizeToFit()
-            views.append((b, button))
+            button.lineBreakMode = .byTruncatingTail
+            return (b, button)
         }
-        var x = rightEdge
-        for (b, button) in views.reversed() {
-            let w = max(button.frame.width, 76)
-            x -= w
-            button.frame = NSRect(x: x, y: y, width: w, height: Self.buttonHeight)
-            x -= 8
-            addSubview(button)
-            buttons.append((b.id, button))
-            if b.id == model.initialFocusID { initialFocus = button }
+    }
+
+    /// Splits the buttons into rows that fit `maxWidth`, keeping their order (a card with four choices, or with long
+    /// per-label choices, wraps instead of running off the card's leading edge). A button wider than the card gets a row
+    /// of its own and is cut to the card's width.
+    static func buttonRows<T>(_ items: [(T, NSButton)], maxWidth: CGFloat) -> [[(T, NSButton)]] {
+        var rows: [[(T, NSButton)]] = []
+        var row: [(T, NSButton)] = []
+        var used: CGFloat = 0
+        for item in items {
+            let w = buttonWidth(item.1, maxWidth: maxWidth)
+            let need = row.isEmpty ? w : used + 8 + w
+            if !row.isEmpty && need > maxWidth {
+                rows.append(row); row = [item]; used = w
+            } else {
+                row.append(item); used = need
+            }
         }
-        buttons.reverse()
-        // The key-view loop follows the visual order, so Tab goes left to right.
+        if !row.isEmpty { rows.append(row) }
+        return rows
+    }
+
+    static func buttonWidth(_ button: NSButton, maxWidth: CGFloat) -> CGFloat {
+        min(max(button.frame.width, 76), maxWidth)
+    }
+
+    /// The buttons sit at the trailing edge of each row in the order the card gives them. None is the default button: Return does nothing.
+    private func layoutButtons(_ rows: [[(CardButton, NSButton)]], model: CardModel, rightEdge: CGFloat, y: CGFloat) {
+        let maxWidth = rightEdge - Self.padding
+        var rowY = y
+        for row in rows {
+            var x = rightEdge
+            for (_, button) in row.reversed() {
+                let w = Self.buttonWidth(button, maxWidth: maxWidth)
+                x -= w
+                button.frame = NSRect(x: x, y: rowY, width: w, height: Self.buttonHeight)
+                x -= 8
+            }
+            for (b, button) in row {
+                addSubview(button)
+                buttons.append((b.id, button))
+                if b.id == model.initialFocusID { initialFocus = button }
+            }
+            rowY += Self.buttonHeight + Self.buttonRowGap
+        }
+        // The key-view loop follows the visual order, so Tab goes left to right, row by row.
         for i in 0..<buttons.count { buttons[i].view.nextKeyView = buttons[(i + 1) % buttons.count].view }
     }
 

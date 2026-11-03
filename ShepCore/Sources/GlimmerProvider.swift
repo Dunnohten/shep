@@ -37,13 +37,14 @@ public struct GlimmerConfig: Equatable, Sendable {
 
     public var chatURL: URL { baseURL.appendingPathComponent("chat/completions") }
 
-    /// Only Glimmer, only a local server. Refuses the port of another local model server.
+    /// An allowlist: a loopback address, and a Muse Glimmer model id (its last path component starts with "muse-glimmer").
+    /// Anything else is refused, and so is the port of another local model server.
     public func validate() throws {
-        let forbiddenPort = 11230 + 4   // another local model server lives here
-        if baseURL.port == forbiddenPort { throw ProviderError.refusedConfig("That port belongs to a different local model server. Shep only talks to Glimmer.") }
+        if LoopbackURL.isOtherModelServer(baseURL) { throw ProviderError.refusedConfig("That port belongs to a different local model server. Shep only talks to Glimmer.") }
         guard LoopbackURL.isLoopback(baseURL) else {
             throw ProviderError.refusedConfig("The local provider must be on this Mac (127.0.0.1).")
         }
+        guard ModelAllowlist.isMuseGlimmer(model) else { throw ProviderError.refusedConfig(ModelAllowlist.glimmerRefusal) }
         guard maxTokens > 0, maxTokens <= GlimmerConfig.maxAllowedTokens else {
             throw ProviderError.refusedConfig("max_tokens must be 1...\(GlimmerConfig.maxAllowedTokens).")
         }

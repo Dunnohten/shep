@@ -1,0 +1,5 @@
+# SHA-256 of tokens that must appear nowhere in the repo, as "<length> <hex>". The tokens themselves are not stored here or anywhere.
+# A token is a run of letters, a run of digits, or a camel-case part of a letter run, lowercased. Checked by scripts/check-banned-tokens.py
+# (scripts/check-rules.sh) and by SourceRulesTests.
+4 67f2d22514622d1be30c14ee9f3cb104503a159a33a656ca91a1953aa9616429
+5 c36562c53838cb8ed23e9de694b67c8f42ebd246ce5073a43a8eac6535122504

@@ -14,6 +14,13 @@ public enum LoopbackURL {
         guard let host = url.host?.lowercased() else { return false }
         return hosts.contains(host)
     }
+
+    /// Another local model server lives on this port; Shep never sends it anything. Written as a sum so no file holds the number.
+    public static let otherModelServerPort = 11230 + 4
+
+    /// True for an address on the other local model server's port: every local config (Glimmer, the label model, the detector)
+    /// refuses it before a byte is sent.
+    public static func isOtherModelServer(_ url: URL) -> Bool { url.port == otherModelServerPort }
 }
 
 

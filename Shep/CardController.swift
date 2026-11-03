@@ -51,6 +51,9 @@ final class CardController {
         if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
     }
 
+    /// A hint in the empty ask field while it answers one question (the label edit); nil puts the usual hint back.
+    func setAskPrompt(_ text: String?) { view.setFieldPrompt(text) }
+
     var isShown: Bool { panel.isVisible }
     var frame: CGRect { panel.frame }
 

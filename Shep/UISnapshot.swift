@@ -232,6 +232,42 @@ enum UISnapshot {
         check("long text: order is text, Approve, Deny", longKids.count >= 3 && longKids[0] is NSTextField
               && (longKids[1] as? NSButton)?.title == "Approve" && (longKids[2] as? NSButton)?.title == "Deny")
         check("long text: the scroll view is not a separate VoiceOver stop", long.initialVoiceOverElement?.enclosingScrollView?.isAccessibilityElement() == false)
+        // Fix this screen: the label cards at the real bubble size (PanelGeometry, 320 x 150 pt; the card clips there), so every
+        // button, including More / Earlier / Back on a picker page of long labels, is on the card, in order for VoiceOver and Tab.
+        func labelCardFits(_ card: LabelCard) -> Bool {
+            let v = CardView(frame: .zero)
+            _ = v.configure(CardModel.approval(text: card.text, choices: card.choices.map { (id: $0.id, label: $0.label) }, title: card.title),
+                            width: PanelGeometry.panelWidth, maxHeight: PanelGeometry.bubbleHeight)
+            var bs: [NSButton] = []
+            func grab(_ x: NSView) { if let b = x as? NSButton { bs.append(b) }; x.subviews.forEach(grab) }
+            grab(v)
+            let inside = bs.allSatisfy { $0.frame.minX >= CardView.padding - 0.5 && $0.frame.maxX <= v.bounds.width - CardView.padding + 0.5
+                && $0.frame.minY >= 0 && $0.frame.maxY <= v.bounds.height + 0.5 }
+            let apart = bs.indices.allSatisfy { i in bs.indices.allSatisfy { j in i == j || !bs[i].frame.intersects(bs[j].frame) } }
+            let ids = card.choices.map { $0.id }
+            // VoiceOver: the text first, then the buttons in the card's order. Tab: the same order, then back round (through the
+            // text when the text takes the keyboard first).
+            let voButtons = (v.accessibilityChildren() ?? []).compactMap { $0 as? NSButton }.map { $0.identifier?.rawValue ?? "" }
+            let byID = Dictionary(uniqueKeysWithValues: bs.map { ($0.identifier?.rawValue ?? "", $0) })
+            let first = byID[ids[0]], last = byID[ids[ids.count - 1]]
+            let tab = ids.indices.dropLast().allSatisfy { k in byID[ids[k]]?.nextKeyView === byID[ids[k + 1]] }
+                && (last?.nextKeyView === first || (last?.nextKeyView === v.initialFocus && v.initialFocus?.nextKeyView === first))
+            // Visual order is reading order: row by row, left to right.
+            let visual = ids.compactMap { byID[$0]?.frame }
+            let reading = zip(visual, visual.dropFirst()).allSatisfy { a, b in b.minY > a.minY + 0.5 || (abs(b.minY - a.minY) <= 0.5 && b.minX > a.minX) }
+            return bs.count == ids.count && inside && apart && voButtons == ids && tab && reading
+        }
+        let longLabels = LabelReview(bundleID: "dev.shep.fixscreen.fixture", appName: "ShepLabelFixture", proposals: (1...13).map {
+            LabelProposal(id: $0, fingerprint: "f\($0)", role: "AXButton", kind: "button", context: "Playback / Rename / Picture",
+                          label: "Play the current track from the start", confidence: 0.9)
+        })
+        check("label card at 150 pt: Accept all, Edit, Reject and Cancel are all on the card", labelCardFits(LabelCardBuilder.main(longLabels)))
+        check("label picker at 150 pt, first page of long labels: every label and More / Back are on the card",
+              labelCardFits(LabelCardBuilder.picker(longLabels, mode: .edit, page: 0)))
+        check("label picker at 150 pt, a middle page: every label and More / Earlier / Back are on the card",
+              labelCardFits(LabelCardBuilder.picker(longLabels, mode: .reject, page: 1)))
+        check("label picker at 150 pt, the last page: its label and Earlier / Back are on the card",
+              labelCardFits(LabelCardBuilder.picker(longLabels, mode: .edit, page: 99)))
         host.close()
         // The pill that shows the question never takes key status: VoiceOver's cursor stays put until the approval card.
         let pill = CardPanel()

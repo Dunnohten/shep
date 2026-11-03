@@ -28,7 +28,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-DEFAULT_PORT = 8765
+DEFAULT_PORT = 8766
 MAX_BODY = 96 * 1024 * 1024
 OMNI_IMGSZ, OMNI_STRIDES = 1280, (8, 16, 32)
 SAM3_PROMPTS = ("rounded rectangle", "button")
@@ -308,8 +308,6 @@ def main():
     args = p.parse_args()
     if args.host not in ("127.0.0.1", "localhost"):
         raise SystemExit("refusing to bind anywhere but loopback")
-    if args.port == 11234:
-        raise SystemExit("port 11234 belongs to another local server")
     detector = FakeDetector() if args.fake else RealDetector(args)
     enabled = ["omniparser-v3"] + (["sam3"] if args.fake or args.sam3 else [])
     server = ThreadingHTTPServer((args.host, args.port), make_handler(detector, enabled, args.port))

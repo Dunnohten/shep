@@ -30,6 +30,13 @@ public struct MetaConfig: Equatable, Sendable {
         self.baseURL = baseURL; self.samModel = samModel; self.museModel = museModel; self.timeout = timeout
     }
     public var responsesURL: URL { baseURL.appendingPathComponent("responses") }
+
+    /// An allowlist: HTTPS at api.meta.ai, and a Muse Spark model for naming.
+    public func validate() throws {
+        guard ModelAllowlist.isCloudEndpoint(baseURL), ModelAllowlist.isMuseSpark(museModel) else {
+            throw ProviderError.refusedConfig(ModelAllowlist.sparkRefusal)
+        }
+    }
 }
 
 /// One HTTP exchange, without URLSession types, so tests (and Linux) can stub it.

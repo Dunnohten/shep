@@ -10,7 +10,7 @@ The merge is pure Swift (`ControlMerger` / `VisionRepair.candidates`, tested): d
 
 ## Run the sidecar
 
-The sidecar is a small Python HTTP server on `127.0.0.1:8765` (override the app's side with `SHEP_DETECTOR_URL`). You create the venv; nothing is installed for you.
+The sidecar is a small Python HTTP server on `127.0.0.1:8766` (override the app's side with `SHEP_DETECTOR_URL`). You create the venv; nothing is installed for you.
 
 ```sh
 python3 -m venv ~/.shep-venv
@@ -18,7 +18,7 @@ python3 -m venv ~/.shep-venv
 ~/.shep-venv/bin/python scripts/detector-server.py --omni-weights ~/Library/Application\ Support/Shep/models/icon_detect_v3.torchscript
 ```
 
-Check it: `curl http://127.0.0.1:8765/health`.
+Check it: `curl http://127.0.0.1:8766/health`.
 
 `--fake` serves canned boxes with no models and no torch; it exists to test the wiring (`curl` it, or point the app at it).
 

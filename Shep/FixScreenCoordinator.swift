@@ -34,6 +34,8 @@ final class FixScreenCoordinator {
     /// `--live-target`: while set, a run reads only this app. The front app's bundle id is compared with it right before the
     /// Accessibility read, and a different one ends the run (`outcome: refused`) with nothing read, captured or sent.
     var requiredBundleID: String?
+    /// The labels Shep added (after approval). When set, controls the app leaves unnamed are named by them in this run's read.
+    var labelStore: LabelOverlayStore?
     /// `--live-target`: the run noticed (at a look it makes itself) that the wanted app is no longer in front. The owner ends the run
     /// (`LiveTargetGate.focusLeft` text, bundle ids only); this coordinator then stops quietly (`targetWasLeft`).
     var onTargetLeft: ((String) -> Void)?
@@ -120,14 +122,18 @@ final class FixScreenCoordinator {
         overlay.setState(.thinking)
         overlay.say(Brief.onIt)
 
-        let maybeSnapshot: AXSnapshot? = await Task.detached { AXReader.read(pid: pid) }.value
+        // The same window label repair scanned (the one the dog sits on), so the stored labels are resolved against it, not the app's main window.
+        let readTarget = AXReader.focusedReadTarget(pid: pid)
+        let maybeSnapshot: AXSnapshot? = await Task.detached { AXReader.read(pid: pid, target: readTarget) }.value
         if runGate.isLeft { return }   // the target left while it was being read: nothing else is looked at, nothing is said
-        guard let snapshot = maybeSnapshot else { failure = .readFailed; overlay.say("I couldn't read that window's controls."); return }
-        if let wanted = wanted, case .refuse(let why) = LiveTargetGate.recheck(wanted: wanted, front: snapshot.bundleID, wantedRunning: true) {
+        guard let readSnapshot = maybeSnapshot else { failure = .readFailed; overlay.say("I couldn't read that window's controls."); return }
+        if let wanted = wanted, case .refuse(let why) = LiveTargetGate.recheck(wanted: wanted, front: readSnapshot.bundleID, wantedRunning: true) {
             // The process that was read is not the wanted app: nothing is captured or sent.
             outcome = .refused; failure = .targetRefused(why)
             overlay.say(LiveTargetGate.overlayLine); return
         }
+        // Controls the app leaves unnamed take the label the person approved earlier (never a control the app names).
+        let snapshot = Self.withStoredLabels(readSnapshot, store: labelStore)
 
         let shot: ScreenCapture.Shot
         let captured = await ScreenCapture.captureWindow(pid: pid, nearFrame: snapshot.windowFrame)
@@ -194,6 +200,18 @@ final class FixScreenCoordinator {
         finished = ended.finished
         actionNote = ended.note
         if finished { onFinished?() }
+    }
+
+    private static func withStoredLabels(_ snapshot: AXSnapshot, store: LabelOverlayStore?) -> AXSnapshot {
+        guard let store = store else { return snapshot }
+        let labels = store.storedLabels(bundleID: snapshot.bundleID)
+        if labels.isEmpty { return snapshot }
+        var named = snapshot
+        // Every window of the app the reader listed (nil for one it did not get to examine), so a label is applied only in the one window of its kind.
+        let open: [WindowSignature?] = snapshot.windows.map { $0.examined ? $0.info.signature : nil }
+        named.controls = LabelOverlayResolver.apply(to: snapshot.controls, windowFrame: snapshot.windowFrame, labels: labels, openWindows: open,
+                                                partial: snapshot.truncated || snapshot.depthCut)
+        return named
     }
 
     /// How the offer of a result ended: the outcome it set (nil leaves the run's own), whether the walk finished, the walk's note.
@@ -319,7 +337,9 @@ final class FixScreenCoordinator {
         if targetLeftNow() { return false }   // no card for a run whose target left (read from the live front app, not only from a flag)
         let text = request.cardText(peers: cardPeers)
         guard Brief.cardFits(text) else { cardWasTooLong = true; return false }   // never approve what the card could not show; the walk says why
-        let title = request.action.dialogTitle(appName: appName, peers: cardPeers)
+        var title = request.action.dialogTitle(appName: appName, peers: cardPeers)
+        // A label Shep added is said to be one: the person hears it when the card is announced.
+        if let note = LabelAnnouncement.text(for: request.action.control) { title += ". " + note }
         onLive?(LiveLog.cardShown(text))
         onLiveEvent?(.cardShown)
         let choice = await overlay.ask(text, choices: Brief.approvalChoices, title: title)

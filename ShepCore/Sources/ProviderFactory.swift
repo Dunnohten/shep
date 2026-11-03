@@ -73,6 +73,7 @@ public enum ProviderFactory {
             return (provider, selection)
         case .meta:
             guard let key = MetaKeySource.resolve(environment: environment) else { throw MetaError.noKey }
+            try config.meta.validate()
             return (MetaProvider(vision: MetaClient(apiKey: key, config: config.meta, transport: transport)), selection)
         case .fake:
             guard let fake else { throw ProviderError.refusedConfig("No fake provider was supplied.") }

@@ -23,6 +23,9 @@ public struct LaunchOptions: Equatable {
     public var exportBarkPath: String?
     /// `--ax-read-once <pid|bundle-id>`: read the app's windows through Accessibility, print what was seen, exit. Read-only.
     public var axReadOnceTarget: String?
+    /// `--fix-screen-scan <pid|bundle-id>`: walk the target window, print one JSON line per checked control with its flag, exit. No model
+    /// call, no writes.
+    public var fixScreenScanTarget: String?
     /// `--press-demo-once <pid|bundle-id> --match "<text>"`: propose AXPress on the one control whose label or tooltip contains
     /// the text; it presses only with `--approve`.
     public var pressDemoTarget: String?
@@ -86,6 +89,7 @@ public struct LaunchOptions: Equatable {
         let truthy: Set<String> = ["1", "true", "yes"]
         o.fixScreenOncePath = fixScreenPath(arguments)
         o.axReadOnceTarget = argumentValue("--ax-read-once", in: arguments)
+        o.fixScreenScanTarget = argumentValue("--fix-screen-scan", in: arguments)
         o.pressDemoTarget = argumentValue("--press-demo-once", in: arguments)
         o.pressMatch = argumentValue("--match", in: arguments)
         o.toolTitle = argumentValue("--title", in: arguments)

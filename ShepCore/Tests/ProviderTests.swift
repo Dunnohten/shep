@@ -65,8 +65,9 @@ final class GlimmerNamerTests: XCTestCase {
         XCTAssertEqual(GlimmerConfig.defaultModelPath(home: "/Users/me/"), "/Users/me/models/Muse-Glimmer-30B-4bit")
     }
 
-    func testConfigRefusesOtherModelServersAndRemoteHosts() {
+    func testConfigRefusesOtherModelsServersAndRemoteHosts() {
         XCTAssertThrowsError(try GlimmerConfig(baseURL: URL(string: "http://127.0.0.1:\(11230 + 4)/v1")!).validate())
+        XCTAssertThrowsError(try GlimmerConfig(model: "/Users/me/models/Some-Other-Model-7B").validate())
         XCTAssertThrowsError(try GlimmerConfig(baseURL: URL(string: "http://example.com:8080/v1")!).validate())
         XCTAssertThrowsError(try GlimmerConfig(maxTokens: 5000).validate())
         XCTAssertNoThrow(try GlimmerConfig(baseURL: URL(string: "http://127.0.0.1:18089/v1")!).validate(), "an already-running llama-server is fine")
@@ -244,7 +245,7 @@ final class GlimmerNamerTests: XCTestCase {
 
     func testNothingIsSentToARefusedServerOrWhenThereIsNothingToName() async throws {
         let t = StubTransport(chatReply(good))
-        let refused = GlimmerNamer(config: GlimmerConfig(baseURL: URL(string: "http://127.0.0.1:\(11230 + 4)/v1")!), transport: t)
+        let refused = GlimmerNamer(config: GlimmerConfig(model: "/m/not-a-meta-model"), transport: t)
         do { _ = try await refused.nameControls(job()); XCTFail("must throw") } catch {}
         var none = job()
         none.candidates = []
@@ -285,7 +286,7 @@ final class ProviderFactoryTests: XCTestCase {
         XCTAssertEqual(d.preferred, .glimmer)
         XCTAssertEqual(d.glimmer.model, "/Users/me/models/Muse-Glimmer-30B-4bit")
         XCTAssertEqual(d.glimmer.baseURL.absoluteString, "http://127.0.0.1:8080/v1")
-        XCTAssertEqual(d.detector.baseURL.absoluteString, "http://127.0.0.1:8765")
+        XCTAssertEqual(d.detector.baseURL.absoluteString, "http://127.0.0.1:8766")
         XCTAssertFalse(d.detector.useSAM3, "SAM 3 is off by default")
     }
 
@@ -322,10 +323,10 @@ final class ProviderFactoryTests: XCTestCase {
 
     func testMakeRefusesAForbiddenGlimmerOrDetectorConfig() {
         var c = ProviderConfig()
-        c.glimmer.baseURL = URL(string: "http://127.0.0.1:\(11230 + 4)/v1")!
+        c.glimmer.model = "/m/not-a-meta-model"
         XCTAssertThrowsError(try ProviderFactory.make(config: c, environment: [:]))
         var d = ProviderConfig()
-        d.detector.baseURL = URL(string: "http://example.com:8765")!
+        d.detector.baseURL = URL(string: "http://example.com:8766")!
         XCTAssertThrowsError(try ProviderFactory.make(config: d, environment: [:]))
     }
 }

@@ -85,6 +85,35 @@ enum AXCommandLine {
         return 0
     }
 
+    // MARK: --fix-screen-scan
+
+    /// Walks the target window with the label scan's caps and prints a JSON line per checked control (flag and reason), then a summary.
+    /// Reads only: no model call, no store, no files. The same capture policy as the app applies to the target app.
+    static func fixScreenScan(target: String, title: String?, frame: CGRect?, environment: [String: String]) -> Int32 {
+        guard AXIsProcessTrusted() else {
+            print("fix-screen-scan: Accessibility is not allowed for this process (System Settings > Privacy & Security > Accessibility)")
+            return 3
+        }
+        guard let parsed = ProcessTarget.parse(target), let pid = processID(for: parsed) else {
+            print("fix-screen-scan: no running app for \"\(target)\"")
+            return 3
+        }
+        let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+        guard ControlPolicy.mayCapture(bundleID: bundle) else {
+            print("fix-screen-scan: Shep never looks at this app's window")
+            return 4
+        }
+        let wantedFrame = frame ?? environment["SHEP_WINDOW_FRAME"].flatMap { CoordinateSpace.parseFrame($0) }
+        let wantedTitle = title ?? environment["SHEP_WINDOW_TITLE"]
+        guard let snapshot = AXReader.read(pid: pid, targetFrame: wantedFrame, targetTitle: wantedTitle, limits: .labelScan) else {
+            print("fix-screen-scan: could not read a window of pid \(pid)")
+            return 3
+        }
+        let scan = LabelScanner.scan(controls: snapshot.controls, windowFrame: snapshot.windowFrame, truncated: snapshot.truncated || snapshot.depthCut)
+        for line in LabelScanReport.jsonLines(scan: scan, bundleID: bundle, pid: Int32(pid)) { print(line) }
+        return 0
+    }
+
     // MARK: --press-demo-once
 
     static func pressDemo(target: String, match: String, title: String?, frame: CGRect?, approve: Bool,
